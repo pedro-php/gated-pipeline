@@ -12,7 +12,7 @@ Claude writes the spec with you, writes failing tests from it, implements until 
 
 ## What each stage proves
 
-| Stage | Who works | The gate (`gp advance`) passes when |
+| Stage | Who works | The gate (`gated advance`) passes when |
 |---|---|---|
 | **Spec** | Claude interviews you and writes numbered acceptance criteria, each with a concrete example; an agent that saw nothing else reads it cold | you approved that exact text |
 | **Test** | `test-writer` agent, from the spec alone | every criterion is cited by a test that runs, and every new test file **fails** (RED) |
@@ -36,7 +36,7 @@ It needs Node 20 or later and git. The plugin itself has no dependencies.
 
 ## Configure your project
 
-Add `gated.config.json` at the repository root and commit it. [`gated.config.example.json`](gated.config.example.json) shows a three-package setup; the smallest useful one is:
+Run `/gated-pipeline:setup` and Claude inspects the project, asks what it cannot read from the files, writes `gated.config.json` and checks it. Or write the file yourself at the repository root. [`gated.config.example.json`](gated.config.example.json) shows a three-package setup; the smallest useful one is:
 
 ```json
 {
@@ -59,6 +59,8 @@ Add `gated.config.json` at the repository root and commit it. [`gated.config.exa
   ]
 }
 ```
+
+A setting the pipeline does not know is refused, with the nearest name: a typo must not turn a gate off quietly. `gated config` prints what the pipeline understood.
 
 | Setting | Meaning | Default |
 |---|---|---|
@@ -115,9 +117,9 @@ Keep a human-readable reporter on standard output as well: the tail of it is wha
 An implementer that can read every test can satisfy the tests instead of the spec, by special-casing the examples. So the test-writer writes two sets from the same spec: the visible tests, and held-out tests in files with `.holdout.` in the name (`export.holdout.test.ts`) that check the same criteria with other inputs.
 
 - Both sets must fail at RED and both are frozen. Then the held-out files are taken out of the worktree and kept, packed, in the repository's git directory. The implementation stage works without them.
-- `gp advance` at the end of implementation brings them back and runs them. If they pass, they stay as ordinary tests of the item: mutation testing and the reviewer see them, and they are merged with the rest.
+- `gated advance` at the end of implementation brings them back and runs them. If they pass, they stay as ordinary tests of the item: mutation testing and the reviewer see them, and they are merged with the rest.
 - If they fail, they are hidden again and the refusal names only the criteria concerned, never the test. Every detail given about a hidden test is one the code can then be fitted to.
-- `gp back test` shows them again, for whoever has to change the tests.
+- `gated back test` shows them again, for whoever has to change the tests.
 
 The guard denies any command or edit that names the store (`.git/gated-holdout/`). To close it to the file-reading tools as well, add a permission rule to your settings: `"permissions": { "deny": ["Read(//absolute/path/to/your/repo/.git/gated-holdout/**)"] }`.
 
@@ -143,7 +145,7 @@ With `"runner": "jest"` the pipeline adds a small Stryker plugin (`gated-jest`) 
 
 Hooks, all plain Node scripts:
 
-- **PreToolUse** on file edits and shell commands denies a write that does not belong to the current stage, and says why. It also holds each agent to its job in any stage: the reviewer changes no file of the repository, the test-writer only test files, the implementer no test. Shell commands are checked for the common write forms only; the hash checks in `gp advance` are what catches the rest.
+- **PreToolUse** on file edits and shell commands denies a write that does not belong to the current stage, and says why. It also holds each agent to its job in any stage: the reviewer changes no file of the repository, the test-writer only test files, the implementer no test. Shell commands are checked for the common write forms only; the hash checks in `gated advance` are what catches the rest.
 - **PreToolUse** on `AskUserQuestion` fills the approval dialog. When Claude asks `Approve spec for <item>?` or `Approve merge of <item>?`, the hook puts the text itself into the dialog's preview, read from disk: the spec file, or the item's evidence and the list of files it changes. You approve what is there, not Claude's account of it. The question carries the first digits of that text's hash.
 - **PostToolUse** on `AskUserQuestion` records your approval when you answer `Approve`, tied to the hash the dialog showed.
 - **Stop** reminds Claude once when it stops in the middle of a working stage. The reviewer's findings are recorded when it hands its report back (**PreToolUse** on `SubagentHandback`, which also sends back a report that lacks the closing block) or, in sessions without that tool, when it stops (**SubagentStop**).
@@ -176,14 +178,15 @@ The rest of the state file is not protected in this way: the pipeline CLI, which
 
 ### Merging
 
-`gp merge` merges only what was proven. If the base branch has moved since the item's checks ran, it first merges the base branch into the item branch and runs the item's tests and the package checks (`lint`, `typecheck`, `build`, `testAll`) on the result. If they fail, or the base branch changed a file the item also changes, the item branch is put back and nothing is merged.
+`gated merge` merges only what was proven. If the base branch has moved since the item's checks ran, it first merges the base branch into the item branch and runs the item's tests and the package checks (`lint`, `typecheck`, `build`, `testAll`) on the result. If they fail, or the base branch changed a file the item also changes, the item branch is put back and nothing is merged.
 
 ## The CLI
 
-Claude runs it for you; it is also how you inspect an item.
+Claude runs it for you as `gated` (the plugin's `bin/` is on its shell's PATH); it is also how you inspect an item. The name is not `gp` on purpose: in many shells that is an alias for `git push`.
 
 ```
 node <plugin>/scripts/gp.mjs status           where the item is and what comes next
+                             config           what the pipeline understood from gated.config.json
                              spec             check the spec's form before asking for approval
                              advance          run the stage's checks and move on
                              mutate [--force] run the mutation gate
@@ -200,14 +203,18 @@ node <plugin>/scripts/gp.mjs status           where the item is and what comes n
 - The agents default to Sonnet (test-writer, implementer) and Opus (reviewer). Edit the `model:` line in `agents/*.md` to change that.
 - Mutation adapters: StrykerJS and a generic command. The per-file speed-up is for Jest; Stryker's Vitest runner already selects tests per file.
 - A stopped mutation run starts over; it does not resume.
-- `gp merge` merges locally and never pushes or deploys.
+- `gated merge` merges locally and never pushes or deploys.
 
 ## Development
 
 ```
 npm test            unit and integration tests (no dependencies, a few seconds)
 npm run test:e2e    the whole pipeline with real Stryker and Jest (needs network)
+npm run evals       the agents' judgement on fixed cases (real model runs: costs tokens)
+claude plugin validate . --strict
 claude --plugin-dir .   try the plugin from a checkout
 ```
+
+`evals/` holds cases for `claude plugin eval`: what an agent must conclude from a given input, such as the reviewer rejecting a false justification. Hooks and gates are covered by the unit tests, which need no model. CI runs the unit tests on Node 20, 22 and 24, the end-to-end test, and the plugin validation; it does not run the evals.
 
 Licensed under Apache-2.0.

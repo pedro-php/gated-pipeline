@@ -5,7 +5,7 @@ import path from 'node:path';
 import { approvalOf, describeApproval, recordApproval } from './approvals.mjs';
 import { isHoldout, loadConfig, STATE_DIR } from './config.mjs';
 import * as checks from './checks.mjs';
-import { currentBranch, git, hashes, isClean, mergeBase, resolveBase } from './git.mjs';
+import { currentBranch, git, hashes, isClean, mergeBase, resolveBase, tryMerge } from './git.mjs';
 import * as holdout from './holdout.mjs';
 import { mutate, openSurvivors } from './mutation.mjs';
 import { awaitingRuling } from './review.mjs';
@@ -310,11 +310,8 @@ function integrate(root, cfg, state, h, baseTip) {
   const head = git(root, ['rev-parse', 'HEAD']);
   const undo = () => git(root, ['reset', '--hard', head], { allowFail: true });
   if (git(root, ['merge-base', 'HEAD', baseTip]) !== baseTip) {
-    const merged = git(root, ['merge', '--no-ff', '-m', `Merge ${state.base} into ${currentBranch(root)}`, baseTip], { allowFail: true });
-    if (merged === null) {
-      git(root, ['merge', '--abort'], { allowFail: true });
-      fail(`"${currentBranch(root)}" conflicts with "${state.base}". Merge "${state.base}" into the item branch, go "back implementation", and prove the result again.`);
-    }
+    const failed = tryMerge(root, baseTip, `Merge ${state.base} into ${currentBranch(root)}`);
+    if (failed) fail(mergeRefusal(currentBranch(root), state.base, failed));
   }
   try {
     const after = hashes(root, cfg, state.base);
@@ -331,6 +328,11 @@ function integrate(root, cfg, state, h, baseTip) {
   }
 }
 
+const mergeRefusal = (branch, base, failed) =>
+  failed.conflict
+    ? `"${branch}" conflicts with "${base}". Merge "${base}" into the item branch, go "back implementation", and prove the result again.`
+    : `git could not merge "${branch}" and "${base}", and not because of a conflict. Nothing was merged. git said:\n${failed.error}`;
+
 export function merge(root) {
   const cfg = configFor(root);
   const state = loadState(root);
@@ -344,11 +346,8 @@ export function merge(root) {
   if (!isClean(main)) fail(`the main checkout (${main}) has uncommitted changes. Clean it, then run merge again.`);
   const baseTip = git(main, ['rev-parse', 'HEAD']);
   if (state.evidence.green?.base !== baseTip) state.evidence.integration = integrate(root, cfg, state, h, baseTip);
-  const merged = git(main, ['merge', '--no-ff', '-m', `Merge ${state.type} ${state.item}`, branch], { allowFail: true });
-  if (merged === null) {
-    git(main, ['merge', '--abort'], { allowFail: true });
-    fail(`"${branch}" conflicts with "${state.base}". Merge "${state.base}" into the item branch, go "back implementation", and prove the result again.`);
-  }
+  const failed = tryMerge(main, branch, `Merge ${state.type} ${state.item}`);
+  if (failed) fail(mergeRefusal(branch, state.base, failed));
   if (state.evidence.integration) logEvent(state, 'integrated', { base: baseTip });
   logEvent(state, 'merged', { into: state.base });
   state.stage = 'done';

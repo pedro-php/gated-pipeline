@@ -6,6 +6,7 @@
 //   prove <test file> [--finding <id>] | back <spec|test|implementation>
 //   approve <spec|merge> (the user only, in a terminal) | merge | summary
 import readline from 'node:readline/promises';
+import { loadConfig } from './lib/config.mjs';
 import { git } from './lib/git.mjs';
 import { openSurvivors } from './lib/mutation.mjs';
 import * as pipeline from './lib/pipeline.mjs';
@@ -58,6 +59,17 @@ async function main() {
       const findings = state.findings.filter((f) => f.status === 'open');
       for (const f of findings) say(`Blocking finding #${f.id}: ${f.text}`);
       for (const f of state.findings.filter((x) => x.status === 'refuted')) say(`Refuted finding #${f.id}: ${f.text} (test: ${f.test})`);
+      return;
+    }
+    case 'config': {
+      // What the pipeline understood from gated.config.json: a refusal when the file has a mistake.
+      const top = git(process.cwd(), ['rev-parse', '--show-toplevel']);
+      const cfg = findRoot(process.cwd()) ? pipeline.configFor(findRoot(process.cwd())) : loadConfig(top);
+      say(`base branch: ${cfg.baseBranch} · interview: ${cfg.interview} · spec read cold: ${cfg.specCheck ? 'yes' : 'no'} · held-out tests: ${cfg.holdout ? 'yes' : 'no'}`);
+      for (const p of cfg.packages) {
+        const checks = ['testAll', 'lint', 'typecheck', 'build'].filter((c) => p.commands[c]);
+        say(`package "${p.name}" (${p.root}): test ${p.commands.test ? `"${p.commands.test}"` : 'MISSING: no RED or GREEN can be proven'}; per-test results: ${p.testReport ?? 'none (exit code only)'}; checks: ${checks.join(', ') || 'none'}; mutation: ${p.mutation === false ? 'none, by decision' : p.mutation ? p.mutation.adapter : 'UNDECIDED: set an adapter, or false'}`);
+      }
       return;
     }
     case 'spec': {
@@ -114,7 +126,7 @@ async function main() {
       return say(pipeline.summary(root, pipeline.configFor(root), loadState(root)));
     }
     default:
-      fail('usage: gp.mjs <start|init|status|spec|advance|mutate|justify|prove|back|approve|merge|summary>');
+      fail('usage: gated <start|init|status|config|spec|advance|mutate|justify|prove|back|approve|merge|summary>');
   }
 }
 

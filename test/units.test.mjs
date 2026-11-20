@@ -1,7 +1,7 @@
 // Pure logic: globs, file classification, spec parsing, stage rules, review parsing.
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { classify, loadConfig, packageOf } from '../scripts/lib/config.mjs';
+import { classify, configProblems, loadConfig, packageOf } from '../scripts/lib/config.mjs';
 import { bashWriteTargets, decideAgent, decideBash, decidePath, decideRecords, decideRecordsPath } from '../scripts/lib/guard.mjs';
 import { parseReview, parseRulings, parseSpecCheck } from '../scripts/lib/review.mjs';
 import { parseSpec, specProblems } from '../scripts/lib/spec.mjs';
@@ -114,6 +114,8 @@ test('bash: no command may approve, or reach the approval records or the state f
     'node "/p/scripts/gp.mjs" approve merge',
     'G=/p/scripts/gp.mjs; node $G approve spec',
     'gp approve spec',
+    'gated approve spec',
+    'cd .claude/worktrees/sub && gated approve merge',
     'bash -c "node /p/scripts/gp.mjs approve spec"',
     `node -e "import('/p/scripts/lib/pipeline.mjs').then((p) => p.approve('.', 'spec'))"`,
   ]) assert.match(decideRecords(command), /only the user approves/, command);
@@ -180,6 +182,34 @@ test('agents: the reviewer writes nothing, the test-writer only tests, the imple
   assert.match(decidePath(cfg, { stage: 'validation', type: 'feature' }, 'server/src/a.spec.ts', 'gated-pipeline:reviewer'), /does not change files/);
   assert.match(decideRecords('zcat .git/gated-holdout/sub.bin'), /held-out tests stay hidden/);
   assert.match(decideRecordsPath('/r/.git/gated-holdout/sub.bin'), /held-out tests stay hidden/);
+});
+
+test('config: a setting the pipeline does not know is refused, with the nearest name or the right place', () => {
+  assert.deepEqual(configProblems({ baseBranch: 'main', packages: [{ name: 'app', commands: { test: 'x' }, mutation: false }] }), []);
+  assert.deepEqual(
+    configProblems({
+      basebranch: 'main',
+      mutation: false,
+      interview: 'sometimes',
+      docs: { record: 'docs' },
+      packages: [{ name: 'app', mutaton: false, tests: '**/*.test.ts', commands: { tests: 'x', lint: 'y' }, mutation: { adaptor: 'stryker', timeout: 5 } }, { commands: {}, wibble: 1 }],
+    }),
+    [
+      '"basebranch" is not a setting (did you mean "baseBranch"?)',
+      '"mutation" is not a setting (it belongs in a package)',
+      'docs: "record" is not a setting (did you mean "records"?)',
+      '"interview" is "always" or "auto"',
+      'package "app": "mutaton" is not a setting (did you mean "mutation"?)',
+      'package "app": commands: "tests" is not a setting (did you mean "test"?)',
+      'package "app": mutation: "adaptor" is not a setting (did you mean "adapter"?)',
+      'package "app": mutation: "timeout" is not a setting',
+      'package "app": "tests" is a list of globs',
+      'package "app": mutation: "adapter" is "stryker" or "command"',
+      'package #2: "wibble" is not a setting',
+    ],
+  );
+  const repo = makeRepo({ packages: [{ name: 'app', mutaton: false }] });
+  assert.throws(() => loadConfig(repo), /gated\.config\.json:\n  package "app": "mutaton" is not a setting \(did you mean "mutation"\?\)/);
 });
 
 test('review block: findings are read by kind; no block means no review', () => {

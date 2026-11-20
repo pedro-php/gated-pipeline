@@ -1,0 +1,4 @@
+#!/usr/bin/env node
+// The pipeline CLI under a short name (not `gp`: many shells alias that to `git push`). Claude Code puts a plugin's bin/ on the
+// PATH of the Bash tool while the plugin is enabled.
+import '../scripts/gp.mjs';

@@ -8,6 +8,7 @@
   "engines": { "node": ">=20" },
   "scripts": {
     "test": "node --test test/*.test.mjs",
-    "test:e2e": "node test/e2e/stryker-jest.e2e.mjs"
+    "test:e2e": "node test/e2e/stryker-jest.e2e.mjs",
+    "evals": "claude plugin eval . --no-publish"
   }
 }

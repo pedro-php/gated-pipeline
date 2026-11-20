@@ -11,7 +11,7 @@ The user wants this bug fixed through the gated pipeline:
 
 $ARGUMENTS
 
-The pipeline CLI is `node "${CLAUDE_PLUGIN_ROOT}/scripts/gp.mjs"`. The pipeline guide calls it `gp`; always run the full command.
+The pipeline CLI is `gated`, on your PATH while the plugin is enabled. If the shell does not find it (in a subagent, say), run `node "${CLAUDE_PLUGIN_ROOT}/scripts/gp.mjs"` with the same arguments.
 
 Read `${CLAUDE_PLUGIN_ROOT}/reference/pipeline.md` now, in full, and follow it from "Starting" with item type `fix`. A fix goes through the same five stages as a feature, with these differences:
 
