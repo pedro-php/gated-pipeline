@@ -113,7 +113,7 @@ export function bashWriteTargets(command, cwd) {
 // Checked on the whole command, whatever the stage and wherever it runs: no
 // step of the pipeline needs the shell for any of this, so naming these is
 // enough to refuse (a variable holding the CLI path does not get around it).
-const CLI = /gp\.mjs|pipeline\.mjs|approvals\.mjs|(?:^|[\s;&|('"`/])gp(?=$|[\s'"`])/;
+const CLI = /gp\.mjs|pipeline\.mjs|approvals\.mjs|(?:^|[\s;&|('"`/])(?:gp|gated)(?=$|[\s'"`])/;
 export function decideRecords(command) {
   if (command.includes(APPROVALS_DIR)) return 'approvals are recorded only when the user answers the approval question';
   if (command.includes(HOLDOUT_DIR)) return 'the held-out tests stay hidden until the implementation gate has run them';

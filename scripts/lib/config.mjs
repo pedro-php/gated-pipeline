@@ -60,6 +60,63 @@ const DEFAULTS = {
   packages: [{ name: 'root' }],
 };
 
+// Every setting the pipeline reads. A key that is not here is a mistake in the
+// file (a typo, a setting put one level too high), and a mistake that is
+// silently ignored turns a gate off without anyone deciding to.
+const KNOWN = {
+  '': ['$schema', 'baseBranch', 'interview', 'interviewMaxRounds', 'specCheck', 'holdout', 'heavySlots', 'heavySlotWaitMinutes', 'heavySlotPollMs', 'docs', 'hotfix', 'checkTimeoutMinutes', 'setup', 'packages'],
+  docs: ['records', 'changelog', 'paths'],
+  hotfix: ['checks', 'baseBranch'],
+  package: ['name', 'root', 'source', 'tests', 'protected', 'holdout', 'commands', 'testReport', 'mutation'],
+  commands: ['test', 'testAll', 'lint', 'typecheck', 'build'],
+  mutation: ['adapter', 'runner', 'staticTests', 'concurrency', 'timeoutMinutes', 'maxFilesPerRun', 'command', 'report'],
+};
+
+// Edit distance, for "did you mean".
+function distance(a, b) {
+  const row = Array.from({ length: b.length + 1 }, (_, i) => i);
+  for (let i = 1; i <= a.length; i++) {
+    let prev = row[0];
+    row[0] = i;
+    for (let j = 1; j <= b.length; j++) {
+      const next = Math.min(row[j] + 1, row[j - 1] + 1, prev + (a[i - 1] === b[j - 1] ? 0 : 1));
+      prev = row[j];
+      row[j] = next;
+    }
+  }
+  return row[b.length];
+}
+
+function unknownKeys(value, kind, where, problems) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return;
+  for (const key of Object.keys(value)) {
+    if (KNOWN[kind].includes(key)) continue;
+    const near = KNOWN[kind].map((k) => [distance(key.toLowerCase(), k.toLowerCase()), k]).sort((a, b) => a[0] - b[0])[0];
+    const elsewhere = Object.entries(KNOWN).find(([k, keys]) => k !== kind && keys.includes(key))?.[0];
+    const hint = near[0] <= 2 ? ` (did you mean "${near[1]}"?)` : elsewhere !== undefined ? ` (it belongs ${elsewhere === '' ? 'at the top level' : elsewhere === 'package' ? 'in a package' : `under "${elsewhere}"`})` : '';
+    problems.push(`${where}"${key}" is not a setting${hint}`);
+  }
+}
+
+// -> what is wrong with the file as the user wrote it; empty when nothing is.
+export function configProblems(user) {
+  const problems = [];
+  unknownKeys(user, '', '', problems);
+  unknownKeys(user.docs, 'docs', 'docs: ', problems);
+  unknownKeys(user.hotfix, 'hotfix', 'hotfix: ', problems);
+  if (user.interview !== undefined && !['always', 'auto'].includes(user.interview)) problems.push('"interview" is "always" or "auto"');
+  if (user.packages !== undefined && !Array.isArray(user.packages)) problems.push('"packages" is a list');
+  for (const [i, p] of (Array.isArray(user.packages) ? user.packages : []).entries()) {
+    const where = `package ${p?.name ? `"${p.name}"` : `#${i + 1}`}: `;
+    unknownKeys(p, 'package', where, problems);
+    unknownKeys(p?.commands, 'commands', `${where}commands: `, problems);
+    unknownKeys(p?.mutation, 'mutation', `${where}mutation: `, problems);
+    for (const key of ['source', 'tests', 'protected', 'holdout']) if (p?.[key] !== undefined && !Array.isArray(p[key])) problems.push(`${where}"${key}" is a list of globs`);
+    if (p?.mutation && typeof p.mutation === 'object' && !['stryker', 'command'].includes(p.mutation.adapter)) problems.push(`${where}mutation: "adapter" is "stryker" or "command"`);
+  }
+  return problems;
+}
+
 export function loadConfig(root) {
   const file = path.join(root, CONFIG_FILE);
   let user = {};
@@ -69,6 +126,8 @@ export function loadConfig(root) {
     } catch (e) {
       fail(`${CONFIG_FILE} is not valid JSON: ${e.message}`);
     }
+    const problems = configProblems(user);
+    if (problems.length) fail(`${CONFIG_FILE}:\n  ${problems.join('\n  ')}`);
   }
   const cfg = {
     ...DEFAULTS,
