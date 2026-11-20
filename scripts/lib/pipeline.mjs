@@ -2,7 +2,7 @@
 // nothing moves forward on a sentence, only on a check that ran.
 import fs from 'node:fs';
 import path from 'node:path';
-import { approvalOf, describeApproval, recordApproval } from './approvals.mjs';
+import { approvalOf, describeApproval, fitPreview, recordApproval } from './approvals.mjs';
 import { isHoldout, loadConfig, STATE_DIR } from './config.mjs';
 import * as checks from './checks.mjs';
 import { currentBranch, git, hashes, isClean, mergeBase, resolveBase, tryMerge } from './git.mjs';
@@ -273,19 +273,45 @@ export function approvalSubject(root, what) {
     if (state.stage !== 'spec') fail('the spec is approved in the spec stage');
     const spec = readSpec(root);
     if (spec.problems.length) fail(`the spec is not ready:\n  ${spec.problems.join('\n  ')}`);
-    let text = spec.text;
+    // What a cold reader still found unclear comes first: it is what the user has to weigh.
+    let open = [];
     if (cfg.specCheck) {
       const check = state.evidence.specCheck;
       if (check?.specHash !== spec.hash) fail('nobody has read this version of the spec cold yet. Have the test-writer agent check it (job "read the spec cold"; its closing GATED-SPEC-CHECK block is recorded by a hook), settle what it finds unclear, then ask again');
-      if (check.unclear.length) text += `\n\n---\nStill unclear to a reader who saw only this spec (approving accepts the spec as it is):\n${check.unclear.map((u) => `- ${u}`).join('\n')}\n`;
+      if (check.unclear.length) open = ['Still unclear to a reader who saw only this spec (approving accepts the spec as it is):', ...check.unclear.map((u) => `- ${u}`), '', '---', ''];
     }
-    return { state, hash: spec.hash, where: `${STATE_DIR}/spec.md`, text };
+    const text = `${open.join('\n')}${open.length ? '\n' : ''}${spec.text}`;
+    const where = `${STATE_DIR}/spec.md`;
+    // Too long for the dialog: the criteria with their first lines, rather than the first third of the file.
+    const lines = spec.text.split('\n');
+    const title = lines.find((l) => l.trim()) ?? '';
+    const criteria = spec.acs.flatMap((ac) => [`${ac.id}: ${ac.title}`, ...ac.body.split('\n').map((l) => l.trim()).filter((l) => /^(when|example|properties)\b/i.test(l)).map((l) => `  ${l}`)]);
+    const preview = fitPreview([open, [title, ''], criteria], { whole: text, where, more: 'Read the whole spec in {where} before approving, or run "gated approve spec" in a terminal of your own: it prints all of it.' });
+    return { state, hash: spec.hash, where, text, preview };
   }
   if (what === 'merge') {
     if (state.stage !== 'merge') fail('the merge is approved in the merge stage');
     const h = hashes(root, cfg, state.base);
     const files = h.files.map((f) => `- ${f.path}${f.deleted ? ' (deleted)' : ''}${f.kind === 'source' || f.kind === 'test' || f.kind === 'docs' ? '' : ` [${f.kind}]`}`);
-    return { state, hash: h.treeHash, where: recordFile(cfg, state), text: `${summary(root, cfg, state)}\n### Files this item changes (${files.length})\n\n${files.join('\n')}\n` };
+    const where = recordFile(cfg, state);
+    const text = `${summary(root, cfg, state)}\n### Files this item changes (${files.length})\n\n${files.join('\n')}\n`;
+    // For the dialog, in the order of what approving accepts: the survivors that were
+    // justified instead of killed, the review findings, the files, then the gates.
+    const e = state.evidence;
+    const justified = (e.mutation?.survivors ?? []).filter((s) => state.justified[s.id]);
+    const findings = state.findings.filter((f) => f.status !== 'open');
+    const gates = evidenceSection(state).split('\n').filter((l) => /^(> |- (RED|GREEN|Held-out|Mutation|lint|typecheck|build|testAll))/.test(l) && !l.endsWith('not configured'));
+    const preview = fitPreview(
+      [
+        [`${state.type} "${state.item}" into ${state.base}: ${files.length} file(s), ${state.type === 'hotfix' ? 'no spec' : `${readSpec(root).acs.length} criteria`}, ${state.round} round(s)`, ''],
+        justified.length ? [`Surviving mutants accepted with a justification (${justified.length}); approving accepts each:`, ...justified.map((s) => `- ${s.file}:${s.line} ${s.mutator} -> ${s.replacement}: ${state.justified[s.id]}`), ''] : [],
+        findings.length ? [`Review findings (${findings.length}):`, ...findings.map((f) => `- #${f.id} [${f.status}] ${f.text}`), ''] : [],
+        [`Files (${files.length}):`, ...files.slice(0, 12), ...(files.length > 12 ? [`- … and ${files.length - 12} more`] : []), ''],
+        gates,
+      ],
+      { whole: text, where, more: 'The whole evidence is in {where}, which is part of what you approve.' },
+    );
+    return { state, hash: h.treeHash, where, text, preview };
   }
   return fail('approve spec | approve merge');
 }
