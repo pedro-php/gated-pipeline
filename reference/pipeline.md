@@ -47,6 +47,7 @@ The goal is a spec the user has read and approved, precise enough that someone w
   Each acceptance criterion (AC) describes one behaviour someone can observe, and carries at least one concrete example with real values. Examples are what the tests are built from, so an AC without one is not finished. Add a `Properties:` line to an AC when an invariant holds for all inputs (“the total never goes below zero”).
 
 - **Check the form** with `gp spec` and fix what it reports, so the user is never asked to approve a spec the gate would then refuse.
+- **Have it read cold** (unless `specCheck` is `false` in `gated.config.json`). Delegate to the `gated-pipeline:test-writer` agent with its job “read the spec cold”: give it the item and the spec's path, and nothing of your conversation with the user. It reports where the text allows two different tests. For each such point, ask the user or decide from what they already said, and write the answer into the spec; then have the new text read again. A point left open is shown to the user in the approval dialog. The approval question is refused until the current text has been read.
 - **Ask for approval** with `AskUserQuestion`, using exactly this question: `Approve spec for <item>?` and the options `Approve` and `Request changes`. The dialog shows the user the spec file as it is on disk, so you do not need to paste it; say in a sentence or two what the item does and what you assumed. If the call is denied, the reason says what is missing. On “Request changes”, edit the spec and ask again: the approval is tied to the exact text.
 - Run `gp advance`.
 
@@ -78,13 +79,14 @@ Do these in order:
 
 1. **Mutation.** Run `gp mutate`, in the background if it will take long (the review of step 2 can run meanwhile; both results are kept). It mutates only the lines the item changed and lists the mutants no test killed. Only a limited number of mutation runs go at once across the repository's worktrees (`heavySlots`, default 2); when the slots are taken, the command waits its turn, so let it wait.
    - For each survivor, have the test-writer add a test that kills it (one or two attempts). Put these in a new test file when you can: if existing tests are untouched, the next `gp mutate` reruns only the survivors.
-   - A survivor that no test can kill (an equivalent mutant, a log message) is recorded with `gp justify <mutant id> "<why no test can tell the difference>"`. Use this sparingly and say the real reason: the user reads every justification before approving the merge.
+   - A survivor that no test can kill (an equivalent mutant, a log message) is recorded with `gp justify <mutant id> "<why no test can tell the difference>"`. Use this sparingly and say the real reason: the reviewer rules on every justification in step 2, and the user reads them before approving the merge.
    - Run `gp mutate` again until it reports the gate clean.
 2. **Review.** Delegate to the `gated-pipeline:reviewer` agent, which starts with no memory of how the code was written. Its closing `GATED-REVIEW` block is recorded by a hook. Blocking findings get an id (`gp status` lists them).
    - For each blocking finding, have the test-writer write a test that demonstrates it, then run `gp prove <test file> --finding <id>`.
      - The test **fails**: the finding is real. Implementation reopens with that test frozen; go back to stage 3, then validation again.
      - The test **passes**: the finding is refuted, and recorded as such with its test.
    - Advisory findings need no action; they appear in the item record's evidence.
+   - The reviewer also rules on each justified survivor. **Equivalent**: the justification stands. **Killable**: the justification is dropped and the reviewer names an input that tells the mutant apart; have the test-writer write that test and run `gp mutate` again. A survivor justified after the review needs the reviewer once more.
 3. Run `gp advance`. It needs a clean mutation result for the exact code, a review of the exact source, and no open finding.
 4. Commit any tests added (`test(<item>): …`).
 

@@ -8,6 +8,7 @@ import * as checks from './checks.mjs';
 import { currentBranch, git, hashes, isClean, mergeBase, resolveBase } from './git.mjs';
 import * as holdout from './holdout.mjs';
 import { mutate, openSurvivors } from './mutation.mjs';
+import { awaitingRuling } from './review.mjs';
 import { readSpec } from './spec.mjs';
 import { loadState, logEvent, newState, nextStage, saveState, specFile, STAGES, updateState } from './state.mjs';
 import { cites } from './test-report.mjs';
@@ -185,6 +186,8 @@ export function advance(root) {
       const open = openSurvivors(state);
       if (open.length) fail(`${open.length} surviving mutant(s) without a killing test or a justification:\n  ${open.slice(0, 20).map((s) => `${s.id}  ${s.mutator} -> ${JSON.stringify(s.replacement)}`).join('\n  ')}`);
       if (state.evidence.review?.sourceHash !== h.sourceHash) fail('no review of this exact source: run the reviewer agent (its closing GATED-REVIEW block is recorded by a hook)');
+      const unruled = awaitingRuling(state);
+      if (unruled.length) fail(`${unruled.length} justification(s) the reviewer has not ruled on. Run the reviewer agent again: it must end with "EQUIVALENT: <id>" or "KILLABLE: <id> <input>" for each:\n  ${unruled.map((s) => `${s.id}: ${state.justified[s.id]}`).join('\n  ')}`);
       const blocking = state.findings.filter((f) => f.status === 'open');
       if (blocking.length) fail(`${blocking.length} blocking finding(s) are neither proven nor refuted. For each, write a test and run "prove <test file> --finding <id>":\n  ${blocking.map((f) => `#${f.id} ${f.text}`).join('\n  ')}`);
       break;
@@ -270,7 +273,13 @@ export function approvalSubject(root, what) {
     if (state.stage !== 'spec') fail('the spec is approved in the spec stage');
     const spec = readSpec(root);
     if (spec.problems.length) fail(`the spec is not ready:\n  ${spec.problems.join('\n  ')}`);
-    return { state, hash: spec.hash, where: `${STATE_DIR}/spec.md`, text: spec.text };
+    let text = spec.text;
+    if (cfg.specCheck) {
+      const check = state.evidence.specCheck;
+      if (check?.specHash !== spec.hash) fail('nobody has read this version of the spec cold yet. Have the test-writer agent check it (job "read the spec cold"; its closing GATED-SPEC-CHECK block is recorded by a hook), settle what it finds unclear, then ask again');
+      if (check.unclear.length) text += `\n\n---\nStill unclear to a reader who saw only this spec (approving accepts the spec as it is):\n${check.unclear.map((u) => `- ${u}`).join('\n')}\n`;
+    }
+    return { state, hash: spec.hash, where: `${STATE_DIR}/spec.md`, text };
   }
   if (what === 'merge') {
     if (state.stage !== 'merge') fail('the merge is approved in the merge stage');
@@ -368,7 +377,7 @@ export function evidenceSection(state, { specApproval = null } = {}) {
   const justified = (e.mutation?.survivors ?? []).filter((s) => state.justified[s.id]);
   if (justified.length) {
     lines.push('', '### Surviving mutants accepted with a justification', '', 'Approving the merge accepts each of these.', '');
-    for (const s of justified) lines.push(`- \`${s.id}\` ${s.mutator} -> \`${s.replacement}\`: ${state.justified[s.id]}`);
+    for (const s of justified) lines.push(`- \`${s.id}\` ${s.mutator} -> \`${s.replacement}\`: ${state.justified[s.id]}${state.judged?.[s.id] ? ' (the reviewer agreed that no test can tell them apart)' : ''}`);
   }
   const shown = state.findings.filter((f) => f.status !== 'open');
   if (shown.length) {
@@ -425,6 +434,9 @@ export function justify(root, id, reason) {
   if ((reason ?? '').trim().length < 20) fail('give the reason no test can kill this mutant (a full sentence)');
   return updateState(root, (state) => {
     if (!(state.evidence.mutation?.survivors ?? []).some((s) => s.id === id)) fail(`"${id}" is not a surviving mutant of the last run`);
+    // A new reason needs a new ruling.
+    delete state.judged?.[id];
+    delete state.rejected?.[id];
     state.justified[id] = reason.trim();
     logEvent(state, 'justified', { mutant: id });
   });

@@ -14,10 +14,10 @@ Claude writes the spec with you, writes failing tests from it, implements until 
 
 | Stage | Who works | The gate (`gp advance`) passes when |
 |---|---|---|
-| **Spec** | Claude interviews you and writes numbered acceptance criteria, each with a concrete example | you approved that exact text |
+| **Spec** | Claude interviews you and writes numbered acceptance criteria, each with a concrete example; an agent that saw nothing else reads it cold | you approved that exact text |
 | **Test** | `test-writer` agent, from the spec alone | every criterion is cited by a test that runs, and every new test file **fails** (RED) |
 | **Implementation** | `implementer` agent | the tests are byte-identical to the ones frozen at RED and now **pass** (GREEN), each criterion by a test that ran; the held-out tests, which the implementer never saw, pass too; lint, typecheck and build pass; no tool configuration was changed |
-| **Validation** | mutation tool, `reviewer` agent, `test-writer` | no mutant on the changed lines survives without a killing test or a written justification; every blocking review finding was proven or refuted by a test |
+| **Validation** | mutation tool, `reviewer` agent, `test-writer` | no mutant on the changed lines survives without a killing test or a written justification the reviewer agreed with; every blocking review finding was proven or refuted by a test |
 | **Docs** | Claude | the item record and the changelog entry exist; the pipeline adds its evidence to the record |
 | **Merge** | you | you approved that exact tree |
 
@@ -63,6 +63,7 @@ Add `gated.config.json` at the repository root and commit it. [`gated.config.exa
 | Setting | Meaning | Default |
 |---|---|---|
 | `baseBranch` | branch items start from and merge into | `development` |
+| `specCheck` | `true`: before you are asked to approve a spec, the test-writer reads it without the conversation and reports where it allows two different tests; what stays open is shown in the approval dialog | `true` |
 | `holdout` | `true`: every item needs held-out tests for each criterion (below). `false`: none | `true` |
 | `interview` | `always`: interview before every spec. `auto`: only when the request is ambiguous | `always` |
 | `interviewMaxRounds` | optional cap on interview rounds (one round = one batch of questions); open points left become written assumptions in the spec | no cap |
@@ -122,7 +123,7 @@ The guard denies any command or edit that names the store (`.git/gated-holdout/`
 
 ### Mutation testing
 
-The gate mutates only the lines the item changed. A surviving mutant must be killed by a new test, or justified in writing; you see every justification in the item record before approving. There is no score threshold. A run that hits its time budget is incomplete and blocks, it never passes.
+The gate mutates only the lines the item changed. A surviving mutant must be killed by a new test, or justified in writing. The reviewer, who did not write the code or the justification, rules on each one: it stands only if the reviewer finds no input that tells the mutant from the original, and otherwise the mutant is open again with that input named. You see every accepted justification in the item record before approving. There is no score threshold. A run that hits its time budget is incomplete and blocks, it never passes.
 
 **StrykerJS** (`"adapter": "stryker"`): install `@stryker-mutator/core` and a runner in the package. Your own `stryker.config.*` is kept; the pipeline overrides `mutate`, the reporters and, when set here, `concurrency`. Options: `runner` (`"jest"` enables the per-file runner below), `staticTests` (below), `concurrency`, `timeoutMinutes` (default 60, per run), `maxFilesPerRun` (default 40: a wider change runs in batches, so the tool's first test run does not exhaust memory), `command` (default `npx stryker run`).
 
