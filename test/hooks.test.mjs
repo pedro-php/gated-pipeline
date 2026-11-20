@@ -214,6 +214,8 @@ test('approval dialog: a text too long for the dialog is shortened to what fits,
   for (let i = 0; i < 30; i++) write(d2, `notes/part${i}.md`, 'a note\n');
   pipeline.advance(d2);
   const { open } = await pipeline.runMutation(d2);
+  write(d2, 'test/try.test.mjs', "import test from 'node:test';\ntest('goes at the mutant, in vain', () => {});\n");
+  await pipeline.runMutation(d2);
   pipeline.justify(d2, open[0].id, `no test can tell them apart, because ${'the difference is only in a log line and '.repeat(12)}nothing else`);
   hook('stop', { hook_event_name: 'SubagentStop', cwd: d2, agent_type: 'gated-pipeline:reviewer', last_assistant_message: `GATED-REVIEW\nADVISORY: src/math.mjs:2 a name a maintainer may trip over\nEQUIVALENT: ${open[0].id}` });
   pipeline.advance(d2);
@@ -222,8 +224,8 @@ test('approval dialog: a text too long for the dialog is shortened to what fits,
   pipeline.advance(d2);
   const merge = dialog(d2, 'Approve merge of sub?').shown.options[0];
   assert.ok(pipeline.approvalSubject(d2, 'merge').text.length > PREVIEW_LIMIT && merge.preview.length <= PREVIEW_LIMIT);
-  assert.match(merge.preview, /^feature "sub" into development: 34 file\(s\), 1 criteria, 1 round\(s\)\n\nSurviving mutants accepted with a justification \(1\); approving accepts each:\n- src\/math\.mjs:2 Fake -> mutated line 2: no test can tell them apart[^\n]*…\n\nReview findings \(1\):\n- #1 \[advisory\] src\/math\.mjs:2 a name a maintainer may trip over\n\nFiles \(34\):\n/);
-  assert.match(merge.preview, /- … and 22 more\n\n- RED: 1 test file/);
+  assert.match(merge.preview, /^feature "sub" into development: 35 file\(s\), 1 criteria, 1 round\(s\)\n\nSurviving mutants accepted with a justification \(1\); approving accepts each:\n- src\/math\.mjs:2 Fake -> mutated line 2: no test can tell them apart[^\n]*…\n\nReview findings \(1\):\n- #1 \[advisory\] src\/math\.mjs:2 a name a maintainer may trip over\n\nFiles \(35\):\n/);
+  assert.match(merge.preview, /- … and 23 more\n\n- RED: 1 test file/);
   assert.match(merge.preview, /… cut to fit this dialog \(\d+ characters in all\)\. The whole evidence is in docs\/items\/[^ ]+\.md, which is part of what you approve\.$/);
   assert.match(merge.description, /the whole evidence is in docs\/items\//);
 });

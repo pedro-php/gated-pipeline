@@ -81,16 +81,16 @@ async function main() {
     case 'advance':
       return report(pipeline.advance(itemRoot()));
     case 'mutate': {
-      const { evidence, reused, open } = await pipeline.runMutation(itemRoot(), { force: has('force') });
+      const { state, evidence, reused, open } = await pipeline.runMutation(itemRoot(), { force: has('force') });
       for (const p of evidence.packages) say(`${p.name}: ${p.ran} mutant(s) run, ${p.killed} killed, ${(p.ms / 60_000).toFixed(1)} min${p.complete ? '' : ` — INCOMPLETE: ${p.reason}`}`);
       if (evidence.waitedMs > 1000) say(`Waited ${(evidence.waitedMs / 60_000).toFixed(1)} min for a mutation slot.`);
       if (reused) say('Same code as the last run: result reused.');
       if (evidence.incremental) say('Source and earlier tests unchanged: only the earlier survivors were run again.');
       if (evidence.disabled.length) say(`No mutation gate in: ${evidence.disabled.join(', ')}`);
-      for (const s of open.slice(0, 30)) say(`SURVIVED ${s.id}  ${s.mutator} -> ${JSON.stringify(s.replacement)} [${s.status}]`);
+      for (const s of open.slice(0, 30)) say(`SURVIVED ${s.id}  ${s.mutator} -> ${JSON.stringify(s.replacement)} [${s.status}]${state.attempts?.[s.id] ? ` (withstood ${state.attempts[s.id]} attempt(s): kill it, or justify it)` : ''}`);
       if (open.length > 30) say(`… and ${open.length - 30} more (status --json lists all)`);
       if (!evidence.complete) fail('the mutation run is incomplete');
-      if (open.length) fail(`${open.length} surviving mutant(s): add a test that kills each, or "justify <id> <reason>" when no test can (the user sees every justification before merging)`);
+      if (open.length) fail(`${open.length} surviving mutant(s): add a test that kills each and run mutate again. One that is still alive after a test went at it can be recorded with "justify <id> <reason>" (the reviewer rules on every justification and the user sees them before merging)`);
       return say('Mutation gate clean.');
     }
     case 'justify': {

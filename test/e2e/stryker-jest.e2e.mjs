@@ -104,12 +104,22 @@ assert.deepEqual(gated, stock, 'the per-file runner must give the stock verdict 
 console.log(`\n${Object.keys(stock).length} mutants, identical verdicts. stock runner: ${(stockMs / 1000).toFixed(1)} s, per-file runner: ${(gatedMs / 1000).toFixed(1)} s (${(stockMs / gatedMs).toFixed(1)}x)`);
 assert.ok(gatedMs < stockMs, 'and be faster');
 
+// --- a survivor cannot be justified before a test has gone at it ---
+const firstSurvivor = evidence.survivors[0].id;
+const early = gp(dir, 'justify', firstSurvivor, 'no input can tell the mutant from the original here');
+assert.equal(early.status, 1);
+assert.match(early.stderr, /no test has tried to kill/);
+
 // --- kill the survivors: only they run again ---
 write(dir, 'test/kill.test.js', testFile('boundaries', 'expect(c.max(2, 2)).toBe(2); expect(c.max(-1, -2)).toBe(-1); expect(c.clamp(2, 0, 3)).toBe(2); expect(c.clamp(0, 0, 3)).toBe(0); expect(c.clamp(3, 0, 3)).toBe(3); expect(c.clamp(4, 0, 3)).toBe(3);'));
 const again = gp(dir, 'mutate');
 const after = JSON.parse(fs.readFileSync(path.join(dir, '.gated/state.json'), 'utf8')).evidence.mutation;
 assert.equal(after.incremental, true, 'tests were only added, so only the survivors run again');
 console.log(`after the killing tests: ${after.survivors.length} survivor(s) (exit ${again.status})`);
+// Stryker reports which tests ran each mutant: the ones still alive were run by the new tests, so they withstood an attempt.
+const attempts = JSON.parse(fs.readFileSync(path.join(dir, '.gated/state.json'), 'utf8')).attempts;
+assert.ok(after.survivors.length > 0 && after.survivors.every((s) => typeof s.coveredBy === 'number' && attempts[s.id] === 1), JSON.stringify({ attempts, survivors: after.survivors.map((s) => [s.id, s.coveredBy]) }));
+assert.equal(gp(dir, 'justify', after.survivors[0].id, 'no input can tell the mutant from the original here').status, 0);
 
 if (!process.argv.includes('--keep')) fs.rmSync(repo, { recursive: true, force: true });
 console.log('e2e OK');

@@ -122,6 +122,8 @@ export function newState({ type, item, base }) {
     sealed: null,
     evidence: {},
     justified: {},
+    // Per surviving mutant: how many times it was still alive after new tests went at it.
+    attempts: {},
     // Rulings of the reviewer on justifications: accepted ones, and the reasons of rejected ones.
     judged: {},
     rejected: {},
