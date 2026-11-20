@@ -105,16 +105,42 @@ With `"runner": "jest"` the pipeline adds a small Stryker plugin (`gated-jest`) 
 
 ## How it is enforced
 
-Four hooks, all plain Node scripts:
+Hooks, all plain Node scripts:
 
-- **PreToolUse** on file edits and shell commands denies a write that does not belong to the current stage, and says why. Shell commands are checked for the common write forms only; the hash checks in `gp advance` are what cannot be bypassed.
-- **PostToolUse** on `AskUserQuestion` records your approval when you answer `Approve` to `Approve spec for <item>?` or `Approve merge of <item>?`. Claude is blocked from recording one itself. If an answer was not picked up, run `gp approve spec` or `gp approve merge` yourself with the `!` prefix.
-- **Stop** reminds Claude once when it stops in the middle of a working stage. **SubagentStop** records the reviewer's findings.
+- **PreToolUse** on file edits and shell commands denies a write that does not belong to the current stage, and says why. Shell commands are checked for the common write forms only; the hash checks in `gp advance` are what catches the rest.
+- **PreToolUse** on `AskUserQuestion` fills the approval dialog. When Claude asks `Approve spec for <item>?` or `Approve merge of <item>?`, the hook puts the text itself into the dialog's preview, read from disk: the spec file, or the item's evidence and the list of files it changes. You approve what is there, not Claude's account of it. The question carries the first digits of that text's hash.
+- **PostToolUse** on `AskUserQuestion` records your approval when you answer `Approve`, tied to the hash the dialog showed.
+- **Stop** reminds Claude once when it stops in the middle of a working stage. The reviewer's findings are recorded when it hands its report back (**PreToolUse** on `SubagentHandback`, which also sends back a report that lacks the closing block) or, in sessions without that tool, when it stops (**SubagentStop**).
 - **SessionStart** restates the item, its stage and the next step, so a new or compacted session picks up where the item is.
 
 Outside a worktree that holds an item, the hooks do nothing.
 
 State is one file per worktree, `.gated/state.json`, kept out of git. Evidence is tied to content hashes: writing docs does not void the proof of the code, and any change to the code does.
+
+### Approvals
+
+An approval is a record of the item, what was approved (spec or merge) and the hash of that content. A spec or a tree with any other hash is not approved. The records are kept apart from the item state, in the repository's git directory (`.git/gated-approvals/`), and the item record says how each approval was given.
+
+Two things write a record: the hook, when you answer the approval dialog, and you, in a terminal of your own:
+
+```
+cd .claude/worktrees/<item>
+node <plugin>/scripts/gp.mjs approve spec     # or: approve merge
+```
+
+It prints the text, asks you to type the item name, and refuses to run without a terminal, so Claude's shell cannot use it. The guard also denies any command or file edit that names the approval records, the state file, or `approve`.
+
+That guard reads the command's text. A model that sets out to get around it (building the path at run time, say) is stopped only by the operating system, so if you run with the [sandbox](https://code.claude.com/docs/en/sandboxing), close the folder to it. Hooks run outside the sandbox and keep working:
+
+```json
+{ "sandbox": { "filesystem": { "denyWrite": ["/absolute/path/to/your/repo/.git/gated-approvals"] } } }
+```
+
+The rest of the state file is not protected in this way: the pipeline CLI, which Claude runs, has to write it.
+
+### Merging
+
+`gp merge` merges only what was proven. If the base branch has moved since the item's checks ran, it first merges the base branch into the item branch and runs the item's tests and the package checks (`lint`, `typecheck`, `build`, `testAll`) on the result. If they fail, or the base branch changed a file the item also changes, the item branch is put back and nothing is merged.
 
 ## The CLI
 
@@ -129,6 +155,7 @@ node <plugin>/scripts/gp.mjs status           where the item is and what comes n
                              prove <test file> [--finding <id>]
                              back <spec|test|implementation>
                              merge
+                             approve <spec|merge>   yours only, in your own terminal
                              start|init <feature|fix|hotfix> <item> [--base <branch>]
 ```
 

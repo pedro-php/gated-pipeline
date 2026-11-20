@@ -2,7 +2,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { classify, loadConfig, packageOf } from '../scripts/lib/config.mjs';
-import { bashWriteTargets, decideBash, decidePath, parseReview } from '../scripts/lib/guard.mjs';
+import { bashWriteTargets, decideBash, decidePath, decideRecords, decideRecordsPath } from '../scripts/lib/guard.mjs';
+import { parseReview } from '../scripts/lib/review.mjs';
 import { parseSpec, specProblems } from '../scripts/lib/spec.mjs';
 import { globToRegExp } from '../scripts/lib/util.mjs';
 import { makeRepo } from './helpers.mjs';
@@ -105,12 +106,30 @@ test('bash: a write to a file the stage forbids is denied; the model cannot appr
   assert.match(decideBash('/r', cfg, state, 'echo x > server/src/a.spec.ts', '/r'), /tests are frozen/);
   assert.equal(decideBash('/r', cfg, state, 'echo x > server/src/a.ts', '/r'), null);
   assert.equal(decideBash('/r', cfg, state, 'echo x > /tmp/elsewhere.txt', '/r'), null);
-  assert.match(decideBash('/r', cfg, state, 'node "/p/scripts/gp.mjs" approve merge', '/r'), /only the user approves/);
+});
+
+test('bash: no command may approve, or reach the approval records or the state file, however it is spelled', () => {
+  for (const command of [
+    'node "/p/scripts/gp.mjs" approve merge',
+    'G=/p/scripts/gp.mjs; node $G approve spec',
+    'gp approve spec',
+    'bash -c "node /p/scripts/gp.mjs approve spec"',
+    `node -e "import('/p/scripts/lib/pipeline.mjs').then((p) => p.approve('.', 'spec'))"`,
+  ]) assert.match(decideRecords(command), /only the user approves/, command);
+  assert.match(decideRecords('echo {} >> "$(git rev-parse --git-common-dir)/gated-approvals/sub.jsonl"'), /approvals are recorded only when the user answers/);
+  assert.match(decideRecords(`node -e "require('fs').writeFileSync('.gated/state.json', '{}')"`), /written by the pipeline CLI only/);
+  assert.match(decideRecords(`python3 -c "open('.gated/state.json', 'w')"`), /written by the pipeline CLI only/);
+  for (const command of ['node /p/scripts/gp.mjs status --json', 'node /p/scripts/gp.mjs advance', 'git commit -m "feat: approve button"', 'ls .gated', 'npm test -- gp']) {
+    assert.equal(decideRecords(command), null, command);
+  }
+  assert.match(decideRecordsPath('/r/.git/gated-approvals/sub.jsonl'), /approvals are recorded only/);
+  assert.equal(decideRecordsPath('/r/src/gated-approvals.ts'), null);
 });
 
 test('review block: findings are read by kind; no block means no review', () => {
   assert.equal(parseReview('looks fine to me'), null);
   assert.deepEqual(parseReview('all good\nGATED-REVIEW'), []);
+  assert.deepEqual(parseReview('I will end with GATED-REVIEW.\nBLOCKING: a draft, dropped\n\nGATED-REVIEW\nADVISORY: kept'), [{ kind: 'advisory', text: 'kept' }], 'the closing block counts');
   assert.deepEqual(parseReview('GATED-REVIEW\nBLOCKING: a.ts:3 empty input -> crash, but AC-2\n- **ADVISORY**: b.ts:9 slow on big lists\n'), [
     { kind: 'blocking', text: 'a.ts:3 empty input -> crash, but AC-2' },
     { kind: 'advisory', text: 'b.ts:9 slow on big lists' },

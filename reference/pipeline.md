@@ -9,7 +9,7 @@ You are the orchestrator. You talk to the user, delegate the writing to three su
 Two things work against you if you ignore them, so know them now:
 
 - **Hooks block writes that do not belong to the current stage.** Tests cannot be edited during implementation, code cannot be edited during validation, and so on. When a write is denied, the reason names the stage. Do not look for another way to make the write; do what the stage asks, or go back a stage with `gp back`.
-- **Only the user approves.** The spec and the merge are approved through `AskUserQuestion` with an exact question, and a hook records the answer. You cannot record an approval yourself.
+- **Only the user approves.** The spec and the merge are approved through `AskUserQuestion` with an exact question. A hook puts the text being approved into the dialog (the spec file itself, or the item's evidence and changed files) and another records the answer. You cannot record an approval yourself, and commands that name the approval records, the state file or `approve` are denied.
 
 `gp status` always tells you where the item is and what comes next. Read a `BLOCKED:` message fully: it says what is missing.
 
@@ -47,7 +47,7 @@ The goal is a spec the user has read and approved, precise enough that someone w
   Each acceptance criterion (AC) describes one behaviour someone can observe, and carries at least one concrete example with real values. Examples are what the tests are built from, so an AC without one is not finished. Add a `Properties:` line to an AC when an invariant holds for all inputs (“the total never goes below zero”).
 
 - **Check the form** with `gp spec` and fix what it reports, so the user is never asked to approve a spec the gate would then refuse.
-- **Ask for approval** with `AskUserQuestion`, using exactly this question: `Approve spec for <item>?` and the options `Approve` and `Request changes`. Show the ACs in the message before the question. On “Request changes”, edit the spec and ask again: the approval is tied to the exact text.
+- **Ask for approval** with `AskUserQuestion`, using exactly this question: `Approve spec for <item>?` and the options `Approve` and `Request changes`. The dialog shows the user the spec file as it is on disk, so you do not need to paste it; say in a sentence or two what the item does and what you assumed. If the call is denied, the reason says what is missing. On “Request changes”, edit the spec and ask again: the approval is tied to the exact text.
 - Run `gp advance`.
 
 ## 2. Test
@@ -73,7 +73,7 @@ The goal is evidence that the tests really pin the behaviour and that the change
 
 Do these in order:
 
-1. **Mutation.** Run `gp mutate`, in the background if it will take long. It mutates only the lines the item changed and lists the mutants no test killed. Only a limited number of mutation runs go at once across the repository's worktrees (`heavySlots`, default 2); when the slots are taken, the command waits its turn, so let it wait.
+1. **Mutation.** Run `gp mutate`, in the background if it will take long (the review of step 2 can run meanwhile; both results are kept). It mutates only the lines the item changed and lists the mutants no test killed. Only a limited number of mutation runs go at once across the repository's worktrees (`heavySlots`, default 2); when the slots are taken, the command waits its turn, so let it wait.
    - For each survivor, have the test-writer add a test that kills it (one or two attempts). Put these in a new test file when you can: if existing tests are untouched, the next `gp mutate` reruns only the survivors.
    - A survivor that no test can kill (an equivalent mutant, a log message) is recorded with `gp justify <mutant id> "<why no test can tell the difference>"`. Use this sparingly and say the real reason: the user reads every justification before approving the merge.
    - Run `gp mutate` again until it reports the gate clean.
@@ -94,8 +94,9 @@ Do these in order:
 
 ## Merge
 
-- Show the user the item record, including its evidence section, then ask with `AskUserQuestion`, using exactly this question: `Approve merge of <item>?` and the options `Approve` and `Request changes`. Approving accepts every justified survivor listed in the evidence.
+- Tell the user in a few sentences what was built and what they should look at, then ask with `AskUserQuestion`, using exactly this question: `Approve merge of <item>?` and the options `Approve` and `Request changes`. The dialog shows them the evidence and the files the item changes, as the pipeline has them. Approving accepts every justified survivor listed there.
 - On approval, make sure everything is committed and run `gp merge`. It merges the item branch into the base branch in the main checkout, without pushing.
+- If the base branch has moved since the item was proven, `gp merge` first merges it into the item branch and runs the item's tests and the package checks on the result. When that fails, or the two conflict, nothing is merged and the item branch is as it was: merge the base branch into the item branch yourself, `gp back implementation`, fix it, and go forward again.
 - After the merge, tell the user the item is in the base branch and that the worktree `.claude/worktrees/<item>` and branch `gated/<item>` can be removed. Remove them only if they ask.
 - On “Request changes”, use `gp back implementation` (or `test`, or `spec`) and work forward again. The approval is tied to the exact tree, so any change needs a new one.
 
@@ -104,4 +105,5 @@ Do these in order:
 - **A check fails and you think the check is wrong.** Say so to the user and let them decide. Do not weaken a test, a lint rule or a configuration to get past it.
 - **The spec turns out to be wrong.** `gp back spec`, fix it, and get it approved again.
 - **`gp mutate` reports an incomplete run** (time budget reached, tool error). An unfinished run proves nothing; fix the cause or raise `mutation.timeoutMinutes`, and run it again.
-- **If the approval hook does not record an answer** the user gave, they can record it themselves by running `gp approve spec` or `gp approve merge` with the `!` prefix.
+- **If the approval hook does not record an answer** the user gave, they can record it themselves by running `gp approve spec` or `gp approve merge` in a terminal of their own, from the worktree. It needs a real terminal, so it does not work from your shell or with the `!` prefix.
+- **`gp` says the item state changed while a command was running.** Another command or a hook wrote the state in the meantime and nothing was lost; run the command again.

@@ -3,7 +3,7 @@
 // Does nothing outside a worktree that holds an item.
 import path from 'node:path';
 import { readInput } from './io.mjs';
-import { decideBash, decideEdit } from '../lib/guard.mjs';
+import { decideBash, decideEdit, decideRecords, decideRecordsPath } from '../lib/guard.mjs';
 import { configFor } from '../lib/pipeline.mjs';
 import { findRoot, loadState } from '../lib/state.mjs';
 
@@ -15,13 +15,15 @@ let reason = null;
 try {
   if (tool === 'Bash') {
     const root = findRoot(cwd);
-    if (root) reason = decideBash(root, configFor(root), loadState(root), input.tool_input?.command ?? '', cwd);
+    reason = decideRecords(input.tool_input?.command ?? '');
+    if (!reason && root) reason = decideBash(root, configFor(root), loadState(root), input.tool_input?.command ?? '', cwd);
   } else {
     const file = input.tool_input?.file_path ?? input.tool_input?.notebook_path;
     if (file) {
       const abs = path.resolve(cwd, file);
       const root = findRoot(path.dirname(abs));
-      if (root) reason = decideEdit(root, configFor(root), loadState(root), abs);
+      reason = decideRecordsPath(abs);
+      if (!reason && root) reason = decideEdit(root, configFor(root), loadState(root), abs);
     }
   }
 } catch (e) {

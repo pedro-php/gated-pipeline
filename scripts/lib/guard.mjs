@@ -3,6 +3,7 @@
 // hash checks in `advance`, which no shell trick gets around.
 import fs from 'node:fs';
 import path from 'node:path';
+import { APPROVALS_DIR } from './approvals.mjs';
 import { classify, STATE_DIR } from './config.mjs';
 
 const SPEC = `${STATE_DIR}/spec.md`;
@@ -105,24 +106,25 @@ export function bashWriteTargets(command, cwd) {
   return targets;
 }
 
+// Shell text that reaches for an approval or for the pipeline's own records.
+// Checked on the whole command, whatever the stage and wherever it runs: no
+// step of the pipeline needs the shell for any of this, so naming these is
+// enough to refuse (a variable holding the CLI path does not get around it).
+const CLI = /gp\.mjs|pipeline\.mjs|approvals\.mjs|(?:^|[\s;&|('"`/])gp(?=$|[\s'"`])/;
+export function decideRecords(command) {
+  if (command.includes(APPROVALS_DIR)) return 'approvals are recorded only when the user answers the approval question';
+  if (/\bapprove\b|recordApproval/.test(command) && CLI.test(command)) return 'only the user approves: ask with AskUserQuestion (the answer is recorded by a hook)';
+  if (new RegExp(`${STATE_DIR.replace('.', '\\.')}/state\\.(json|lock)`).test(command)) return `${STATE_DIR}/state.json is written by the pipeline CLI only (read it with "status --json")`;
+  return null;
+}
+
+// A file tool aimed at the approval records, in any checkout.
+export const decideRecordsPath = (absPath) => (absPath.split(/[\\/]/).includes(APPROVALS_DIR) ? 'approvals are recorded only when the user answers the approval question' : null);
+
 export function decideBash(root, cfg, state, command, cwd) {
-  if (/gp\.mjs['"]?\s+approve\b/.test(command)) return 'only the user approves: ask with AskUserQuestion (the answer is recorded by a hook)';
   for (const target of bashWriteTargets(command, cwd)) {
     const reason = decideEdit(root, cfg, state, path.resolve(cwd, target));
     if (reason) return `${target}: ${reason}`;
   }
   return null;
-}
-
-// Parses the block a reviewer must end with:
-//   GATED-REVIEW
-//   BLOCKING: <finding a failing test can demonstrate>
-//   ADVISORY: <finding no test can show>
-export function parseReview(message) {
-  if (!/GATED-REVIEW/.test(message ?? '')) return null;
-  const findings = [];
-  for (const m of message.matchAll(/^\s*(?:[-*]\s*)?\**(BLOCKING|ADVISORY)\**\s*:\s*(.+)$/gm)) {
-    findings.push({ kind: m[1].toLowerCase(), text: m[2].trim() });
-  }
-  return findings;
 }

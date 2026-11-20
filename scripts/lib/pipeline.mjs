@@ -2,13 +2,14 @@
 // nothing moves forward on a sentence, only on a check that ran.
 import fs from 'node:fs';
 import path from 'node:path';
+import { approvalOf, describeApproval, recordApproval } from './approvals.mjs';
 import { loadConfig, STATE_DIR } from './config.mjs';
 import * as checks from './checks.mjs';
-import { currentBranch, git, hashes, isClean, resolveBase } from './git.mjs';
+import { currentBranch, git, hashes, isClean, mergeBase, resolveBase } from './git.mjs';
 import { mutate, openSurvivors } from './mutation.mjs';
 import { readSpec } from './spec.mjs';
-import { loadState, logEvent, newState, nextStage, saveState, specFile, STAGES } from './state.mjs';
-import { fail, run } from './util.mjs';
+import { loadState, logEvent, newState, nextStage, saveState, specFile, STAGES, updateState } from './state.mjs';
+import { fail, GateError, run } from './util.mjs';
 
 export const mainRoot = (root) => git(root, ['worktree', 'list', '--porcelain']).split('\n')[0].replace(/^worktree /, '');
 
@@ -50,7 +51,7 @@ export function init(root, { type, item, base }) {
     fs.appendFileSync(exclude, `${lines.endsWith('\n') || !lines ? '' : '\n'}${missing.join('\n')}\n`);
   }
   logEvent(state, 'started');
-  saveState(root, state);
+  saveState(root, state, { replace: true });
   return state;
 }
 
@@ -75,7 +76,7 @@ function move(root, state, to) {
 function proveGreen(root, cfg, state, h, staticNames) {
   const green = checks.greenCheck(root, cfg, h);
   const stat = checks.staticChecks(root, cfg, h, staticNames);
-  state.evidence.green = { codeHash: h.codeHash, sourceHash: h.sourceHash, runs: green.runs, static: stat.results, at: new Date().toISOString() };
+  state.evidence.green = { codeHash: h.codeHash, sourceHash: h.sourceHash, base: mergeBase(root, state.base), runs: green.runs, static: stat.results, at: new Date().toISOString() };
 }
 
 export function advance(root) {
@@ -88,14 +89,14 @@ export function advance(root) {
     case 'spec': {
       const spec = readSpec(root);
       if (spec.problems.length) fail(`the spec is not ready:\n  ${spec.problems.join('\n  ')}`);
-      if (state.approvals.spec?.specHash !== spec.hash) fail(`the user has not approved this version of the spec. ${hint(state)}`);
+      if (!approvalOf(root, state, 'spec', spec.hash)) fail(`the user has not approved this version of the spec. ${hint(state)}`);
       if (state.round === 1 && (h.source.length || h.tests.length)) fail('code changed during the spec stage; revert it (the spec comes first)');
       state.snapshot = { sourceHash: h.sourceHash };
       break;
     }
     case 'test': {
       const spec = readSpec(root);
-      if (state.approvals.spec?.specHash !== spec.hash) fail('the spec changed after the user approved it: restore it, or go "back spec" and ask again');
+      if (!approvalOf(root, state, 'spec', spec.hash)) fail('the spec changed after the user approved it: restore it, or go "back spec" and ask again');
       if (h.sourceHash !== state.snapshot?.sourceHash) fail('non-test files changed during the test stage; revert them (tests come before the implementation)');
       const coverage = checks.acCoverage(root, spec.acs, h);
       const red = checks.redCheck(root, cfg, state, h);
@@ -110,7 +111,7 @@ export function advance(root) {
         const wantsTests = cfg.hotfix.checks.includes('test');
         const green = wantsTests ? checks.greenCheck(root, cfg, h) : { runs: [] };
         const stat = checks.staticChecks(root, cfg, h, names);
-        state.evidence.green = { codeHash: h.codeHash, sourceHash: h.sourceHash, runs: green.runs, static: stat.results, at: new Date().toISOString() };
+        state.evidence.green = { codeHash: h.codeHash, sourceHash: h.sourceHash, base: mergeBase(root, state.base), runs: green.runs, static: stat.results, at: new Date().toISOString() };
         writeEvidence(root, cfg, state);
         break;
       }
@@ -193,8 +194,7 @@ export function back(root, target) {
   if (to >= from || state.stage === 'done') fail(`the item is at "${state.stage}": "${target}" is not behind it`);
   const cfg = configFor(root);
   const h = hashes(root, cfg, state.base);
-  if (target === 'spec') delete state.approvals.spec;
-  delete state.approvals.merge;
+  // Approvals need no voiding: each is tied to a content hash, so whatever changes from here is not approved.
   state.snapshot = { sourceHash: h.sourceHash };
   // The tests as they stand are the baseline: only what changes from here must be RED again.
   state.frozenTests = checks.freeze(root, h);
@@ -205,22 +205,66 @@ export function back(root, target) {
   return state;
 }
 
-// Recorded when the human answers the approval question (hook), or runs "approve" themselves.
-export function approve(root, what) {
+// What the user is asked to approve, as the pipeline reads it from disk. The
+// approval dialog and the terminal both show this text, so the user sees the
+// thing itself and not the model's account of it.
+export function approvalSubject(root, what) {
   const cfg = configFor(root);
   const state = loadState(root);
   if (what === 'spec') {
     if (state.stage !== 'spec') fail('the spec is approved in the spec stage');
     const spec = readSpec(root);
     if (spec.problems.length) fail(`the spec is not ready:\n  ${spec.problems.join('\n  ')}`);
-    state.approvals.spec = { specHash: spec.hash, at: new Date().toISOString() };
-  } else if (what === 'merge') {
+    return { state, hash: spec.hash, where: `${STATE_DIR}/spec.md`, text: spec.text };
+  }
+  if (what === 'merge') {
     if (state.stage !== 'merge') fail('the merge is approved in the merge stage');
-    state.approvals.merge = { treeHash: hashes(root, cfg, state.base).treeHash, at: new Date().toISOString() };
-  } else fail('approve spec | approve merge');
-  logEvent(state, 'approved', { what });
-  saveState(root, state);
-  return state;
+    const h = hashes(root, cfg, state.base);
+    const files = h.files.map((f) => `- ${f.path}${f.deleted ? ' (deleted)' : ''}${f.kind === 'source' || f.kind === 'test' || f.kind === 'docs' ? '' : ` [${f.kind}]`}`);
+    return { state, hash: h.treeHash, where: recordFile(cfg, state), text: `${summary(root, cfg, state)}\n### Files this item changes (${files.length})\n\n${files.join('\n')}\n` };
+  }
+  return fail('approve spec | approve merge');
+}
+
+// Records a human approval of the content as it is now. Called by the approval
+// hook when the user answers the question, and by "approve" in the user's terminal.
+// `expect` is the hash (or its start) of what the user was shown.
+export function approve(root, what, { via = 'terminal', expect, toolUseId, sessionId } = {}) {
+  const { state, hash } = approvalSubject(root, what);
+  if (expect && !hash.startsWith(expect)) fail(`the ${what === 'spec' ? 'spec' : 'item'} changed after it was shown for approval: ask again`);
+  recordApproval(root, state, { what, hash, via, toolUseId, sessionId });
+  return updateState(root, (s) => logEvent(s, 'approved', { what, via }));
+}
+
+// The proofs were run on the item branch as it stood on one base commit. When
+// the base branch has moved since, the merged result is a tree nobody tested,
+// and two changes that each pass can break each other without a textual
+// conflict. So the result is built and checked before the base branch moves:
+// the base is merged into the item branch, and the item's tests and the
+// package checks run on that. Any failure puts the item branch back.
+function integrate(root, cfg, state, h, baseTip) {
+  const head = git(root, ['rev-parse', 'HEAD']);
+  const undo = () => git(root, ['reset', '--hard', head], { allowFail: true });
+  if (git(root, ['merge-base', 'HEAD', baseTip]) !== baseTip) {
+    const merged = git(root, ['merge', '--no-ff', '-m', `Merge ${state.base} into ${currentBranch(root)}`, baseTip], { allowFail: true });
+    if (merged === null) {
+      git(root, ['merge', '--abort'], { allowFail: true });
+      fail(`"${currentBranch(root)}" conflicts with "${state.base}". Merge "${state.base}" into the item branch, go "back implementation", and prove the result again.`);
+    }
+  }
+  try {
+    const after = hashes(root, cfg, state.base);
+    if (after.treeHash !== h.treeHash) fail(`"${state.base}" has since changed files this item also changes, so the merged files are not the ones that were proven and approved. Merge "${state.base}" into the item branch, go "back implementation", and prove the result again.`);
+    const names = state.type === 'hotfix' ? cfg.hotfix.checks.filter((c) => c !== 'test') : undefined;
+    if (state.type !== 'hotfix' || cfg.hotfix.checks.includes('test')) checks.greenCheck(root, cfg, after);
+    const stat = checks.staticChecks(root, cfg, after, names);
+    if (!isClean(root)) fail('a check changed tracked files while testing the merged result; nothing was merged');
+    return { base: baseTip, static: stat.results, at: new Date().toISOString() };
+  } catch (e) {
+    undo();
+    if (e instanceof GateError) e.message = `"${state.base}" has moved since this item was proven, and the merged result does not pass:\n${e.message}\nNothing was merged and the item branch is as it was. Merge "${state.base}" into the item branch, go "back implementation", and fix it there.`;
+    throw e;
+  }
 }
 
 export function merge(root) {
@@ -228,17 +272,20 @@ export function merge(root) {
   const state = loadState(root);
   if (state.stage !== 'merge') fail(`the item is at "${state.stage}", not at merge`);
   const h = hashes(root, cfg, state.base);
-  if (state.approvals.merge?.treeHash !== h.treeHash) fail(`the user has not approved this exact tree. ${hint(state)}`);
+  if (!approvalOf(root, state, 'merge', h.treeHash)) fail(`the user has not approved this exact tree. ${hint(state)}`);
   if (!isClean(root)) fail('commit the item first: the worktree has uncommitted changes');
   const main = mainRoot(root);
   const branch = currentBranch(root);
   if (currentBranch(main) !== state.base) fail(`the main checkout (${main}) is not on "${state.base}". Merge by hand: git merge --no-ff ${branch}`);
   if (!isClean(main)) fail(`the main checkout (${main}) has uncommitted changes. Clean it, then run merge again.`);
+  const baseTip = git(main, ['rev-parse', 'HEAD']);
+  if (state.evidence.green?.base !== baseTip) state.evidence.integration = integrate(root, cfg, state, h, baseTip);
   const merged = git(main, ['merge', '--no-ff', '-m', `Merge ${state.type} ${state.item}`, branch], { allowFail: true });
   if (merged === null) {
     git(main, ['merge', '--abort'], { allowFail: true });
     fail(`"${branch}" conflicts with "${state.base}". Merge "${state.base}" into the item branch, go "back implementation", and prove the result again.`);
   }
+  if (state.evidence.integration) logEvent(state, 'integrated', { base: baseTip });
   logEvent(state, 'merged', { into: state.base });
   state.stage = 'done';
   saveState(root, state);
@@ -246,10 +293,11 @@ export function merge(root) {
 }
 
 // What the pipeline can say about the item from its recorded evidence.
-export function evidenceSection(state) {
+export function evidenceSection(state, { specApproval = null } = {}) {
   const e = state.evidence;
   const lines = ['## Pipeline evidence', '', `Base branch: \`${state.base}\` · rounds: ${state.round} · started ${state.startedAt.slice(0, 10)}`, ''];
   if (state.type === 'hotfix') lines.push('> **Hotfix.** Skipped on purpose: spec, RED proof, mutation gate, review. Open a `/fix` to pay this back with a regression test.', '');
+  if (specApproval) lines.push(`- Spec approved by the user: ${describeApproval(specApproval)}`);
   if (e.red) lines.push(`- RED: ${e.red.files.length} test file(s) failed before the implementation (${e.red.files.map((f) => f.path).join(', ')})`);
   if (e.green) {
     lines.push(`- GREEN: ${e.green.runs.length ? e.green.runs.map((r) => `${r.package} passed`).join(', ') : 'no test run'}`);
@@ -276,7 +324,13 @@ export function evidenceSection(state) {
 export function summary(root, cfg, state) {
   const lines = [`# ${state.type}: ${state.item}`, ''];
   if (state.type !== 'hotfix' && fs.existsSync(specFile(root))) lines.push('## Acceptance criteria', '', ...readSpec(root).acs.map((ac) => `- **${ac.id}** ${ac.title}`), '');
-  return `${lines.join('\n')}${evidenceSection(state)}`;
+  return `${lines.join('\n')}${evidenceSection(state, { specApproval: specApproval(root, state) })}`;
+}
+
+// The approval of the spec as it stands, if the user gave one.
+function specApproval(root, state) {
+  if (state.type === 'hotfix' || !fs.existsSync(specFile(root))) return null;
+  return approvalOf(root, state, 'spec', readSpec(root).hash);
 }
 
 const EVIDENCE_START = '<!-- gated-pipeline evidence: generated, do not edit -->';
@@ -286,7 +340,7 @@ const EVIDENCE_END = '<!-- end of gated-pipeline evidence -->';
 function writeEvidence(root, cfg, state) {
   const file = path.join(root, recordFile(cfg, state));
   fs.mkdirSync(path.dirname(file), { recursive: true });
-  const block = `${EVIDENCE_START}\n${evidenceSection(state)}${EVIDENCE_END}\n`;
+  const block = `${EVIDENCE_START}\n${evidenceSection(state, { specApproval: specApproval(root, state) })}${EVIDENCE_END}\n`;
   if (!fs.existsSync(file)) return fs.writeFileSync(file, `# ${state.type}: ${state.item}\n\n${block}`);
   let text = fs.readFileSync(file, 'utf8');
   const start = text.indexOf(EVIDENCE_START);
@@ -296,22 +350,24 @@ function writeEvidence(root, cfg, state) {
 }
 
 export async function runMutation(root, { force = false } = {}) {
-  const state = loadState(root);
-  if (state.stage !== 'validation') fail('"mutate" belongs to the validation stage');
-  const { reused, ...evidence } = await mutate(root, configFor(root), state, { force });
-  state.evidence.mutation = evidence;
-  logEvent(state, 'mutated', { total: evidence.total, survivors: evidence.survivors.length, reused: Boolean(reused), incremental: evidence.incremental });
-  saveState(root, state);
+  const started = loadState(root);
+  if (started.stage !== 'validation') fail('"mutate" belongs to the validation stage');
+  const { reused, ...evidence } = await mutate(root, configFor(root), started, { force });
+  // The run can take a long time, and a review or a justification may have
+  // been recorded meanwhile: the result goes into the state as it is now.
+  const state = updateState(root, (s) => {
+    s.evidence.mutation = evidence;
+    logEvent(s, 'mutated', { total: evidence.total, survivors: evidence.survivors.length, reused: Boolean(reused), incremental: evidence.incremental });
+  });
   return { state, evidence, reused: Boolean(reused), open: openSurvivors(state) };
 }
 
 // A survivor no test can kill is accepted with a written reason; the user reads it before merging.
 export function justify(root, id, reason) {
-  const state = loadState(root);
-  if (!(state.evidence.mutation?.survivors ?? []).some((s) => s.id === id)) fail(`"${id}" is not a surviving mutant of the last run`);
   if ((reason ?? '').trim().length < 20) fail('give the reason no test can kill this mutant (a full sentence)');
-  state.justified[id] = reason.trim();
-  logEvent(state, 'justified', { mutant: id });
-  saveState(root, state);
-  return state;
+  return updateState(root, (state) => {
+    if (!(state.evidence.mutation?.survivors ?? []).some((s) => s.id === id)) fail(`"${id}" is not a surviving mutant of the last run`);
+    state.justified[id] = reason.trim();
+    logEvent(state, 'justified', { mutant: id });
+  });
 }

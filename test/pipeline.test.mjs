@@ -4,8 +4,8 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
 import * as pipeline from '../scripts/lib/pipeline.mjs';
-import { loadState } from '../scripts/lib/state.mjs';
-import { commit, DEFAULT_CONFIG, gp, hook, IMPL, makeRepo, RED_TEST, sh, SPEC, write } from './helpers.mjs';
+import { loadState, saveState, updateState } from '../scripts/lib/state.mjs';
+import { approvals, commit, DEFAULT_CONFIG, gp, hook, IMPL, makeRepo, RED_TEST, sh, SPEC, write } from './helpers.mjs';
 
 const blocked = (fn, pattern) => assert.throws(fn, (e) => e.name === 'Error' && pattern.test(e.message) ? true : assert.fail(`unexpected: ${e.message}`));
 const stage = (dir) => loadState(dir).stage;
@@ -208,6 +208,22 @@ test('mutation: the same code reuses the result; added tests rerun only the surv
   assert.equal(calls().at(-1), 'src/math.mjs:2-2 src/math.mjs:3-3', 'only the lines that had survivors');
 });
 
+test('state: what is recorded while a long command runs is kept, and a stale write is refused', async () => {
+  const { dir } = itemAt('validation');
+  const before = loadState(dir);
+  const running = pipeline.runMutation(dir); // loads the state, then waits for the tool
+  review(dir, 'GATED-REVIEW\nADVISORY: recorded while the mutation run was going');
+  const { state, open } = await running;
+  assert.equal(open.length, 1);
+  assert.deepEqual(state.findings.map((f) => f.status), ['advisory'], 'the review survived the end of the mutation run');
+  assert.ok(loadState(dir).evidence.review && loadState(dir).evidence.mutation);
+
+  blocked(() => saveState(dir, before), /state changed while this command was running/);
+  assert.ok(loadState(dir).evidence.mutation, 'nothing was overwritten');
+  updateState(dir, (s) => s.log.push({ event: 'note' }));
+  assert.equal(loadState(dir).rev, state.rev + 1);
+});
+
 test('mutation: a wide change runs in batches of files and the results are merged', async () => {
   const config = structuredClone(DEFAULT_CONFIG);
   config.packages[0].mutation.maxFilesPerRun = 1;
@@ -339,14 +355,68 @@ test('merge: needs the approval of the exact tree, a committed item, and merges 
   assert.match(sh(repo, 'git', ['log', '-1', '--format=%s']), /Merge feature sub/);
 });
 
-test('back: returns to an earlier stage, voids the merge approval, and changed tests must be RED again', async () => {
-  const { dir } = await itemAtMerge();
+test('merge: when the base branch has moved, the merged result is tested before the base branch moves', async () => {
+  const config = structuredClone(DEFAULT_CONFIG);
+  // stands in for a check that only the combination of both changes can fail
+  config.packages[0].commands.typecheck = 'test ! -e src/clash.mjs';
+  const repo = makeRepo(config);
+  const dir = pipeline.start(repo, { type: 'feature', item: 'sub' });
+  write(dir, '.gated/spec.md', SPEC);
+  pipeline.approve(dir, 'spec');
+  pipeline.advance(dir);
+  write(dir, 'test/sub.test.mjs', RED_TEST);
+  pipeline.advance(dir);
+  write(dir, 'src/math.mjs', IMPL);
+  pipeline.advance(dir);
+  await toDocs(dir);
+  write(dir, pipeline.recordFile(pipeline.configFor(dir), loadState(dir)), '# sub\nAC-1 done\n');
+  write(dir, 'CHANGELOG.md', '# Changelog\n- sub\n');
+  pipeline.advance(dir);
+  pipeline.approve(dir, 'merge');
+  commit(dir, 'feat(sub): subtract');
+  const head = () => sh(dir, 'git', ['rev-parse', 'HEAD']).trim();
+  const itemHead = head();
+
+  // another change lands on the base branch: no textual conflict, but the two do not work together
+  write(repo, 'src/clash.mjs', 'export const clash = 1;\n');
+  commit(repo, 'feat: something else');
+  const baseHead = sh(repo, 'git', ['rev-parse', 'HEAD']).trim();
+  blocked(() => pipeline.merge(dir), /"development" has moved since this item was proven, and the merged result does not pass:\ntypecheck failed in app[\s\S]*Nothing was merged/);
+  assert.equal(head(), itemHead, 'the item branch is put back');
+  assert.equal(sh(repo, 'git', ['rev-parse', 'HEAD']).trim(), baseHead, 'the base branch did not move');
+  assert.equal(stage(dir), 'merge');
+
+  // the clash is removed from the base branch: the merged result passes, and the approval of the same tree still holds
+  sh(repo, 'git', ['rm', '-q', 'src/clash.mjs']);
+  write(repo, 'src/other.mjs', 'export const other = 1;\n');
+  commit(repo, 'fix: remove the clash');
+  const done = pipeline.merge(dir);
+  assert.equal(done.stage, 'done');
+  assert.deepEqual(done.evidence.integration.static.map((s) => [s.check, s.status]).find(([c]) => c === 'typecheck'), ['typecheck', 'passed']);
+  assert.ok(fs.existsSync(path.join(repo, 'src/other.mjs')) && fs.readFileSync(path.join(repo, 'src/math.mjs'), 'utf8') === IMPL);
+  assert.equal(sh(repo, 'git', ['status', '--porcelain']), '');
+});
+
+test('merge: a base branch that changed the same lines is a conflict, and nothing moves', async () => {
+  const { repo, dir } = await itemAtMerge();
+  pipeline.approve(dir, 'merge');
+  commit(dir, 'feat(sub): subtract');
+  write(repo, 'src/math.mjs', 'export const add = (a, b) => a + b;\nexport const mul = (a, b) => a * b;\n');
+  commit(repo, 'feat: multiply');
+  const baseHead = sh(repo, 'git', ['rev-parse', 'HEAD']).trim();
+  blocked(() => pipeline.merge(dir), /"gated\/sub" conflicts with "development"/);
+  assert.equal(sh(dir, 'git', ['status', '--porcelain']), '', 'no half-finished merge is left behind');
+  assert.equal(sh(repo, 'git', ['rev-parse', 'HEAD']).trim(), baseHead);
+});
+
+test('back: returns to an earlier stage; the approval stays with the tree it was given for, and changed tests must be RED again', async () => {
+  const { repo, dir } = await itemAtMerge();
   pipeline.approve(dir, 'merge');
   blocked(() => pipeline.back(dir, 'docs'), /"back" goes to/);
   const state = pipeline.back(dir, 'test');
   assert.equal(state.stage, 'test');
   assert.equal(state.round, 2);
-  assert.equal(state.approvals.merge, undefined);
+  assert.deepEqual(approvals(repo).map((a) => a.what), ['spec', 'merge'], 'records are never rewritten');
   blocked(() => pipeline.advance(dir), /RED needs at least one new or changed test file/);
   write(dir, 'test/sub.test.mjs', `${RED_TEST}// reworded, still passing\n`);
   blocked(() => pipeline.advance(dir), /not RED/);
