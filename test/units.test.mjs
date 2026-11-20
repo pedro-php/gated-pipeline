@@ -93,6 +93,13 @@ test('bash: redirects, tee, touch, mv/cp destinations are write targets; reads a
   assert.deepEqual(t('cat src/a.ts && npm run build'), []);
 });
 
+test('bash: the text of a heredoc is data; only its real target counts', () => {
+  const doc = "cat > docs/items/x.md <<'EOF'\n# Title\n> quoted line -> result\nrm src/a.ts; echo y > src/b.ts\nEOF\necho done";
+  assert.deepEqual(bashWriteTargets(doc, '/nowhere'), ['docs/items/x.md']);
+  assert.equal(decideBash('/r', cfg, { stage: 'docs', type: 'feature' }, doc, '/r'), null);
+  assert.match(decideBash('/r', cfg, { stage: 'docs', type: 'feature' }, doc.replace('docs/items/x.md', 'server/src/a.ts'), '/r'), /docs stage/);
+});
+
 test('bash: a write to a file the stage forbids is denied; the model cannot approve', () => {
   const state = { stage: 'implementation', type: 'feature' };
   assert.match(decideBash('/r', cfg, state, 'echo x > server/src/a.spec.ts', '/r'), /tests are frozen/);

@@ -46,6 +46,7 @@ The goal is a spec the user has read and approved, precise enough that someone w
 
   Each acceptance criterion (AC) describes one behaviour someone can observe, and carries at least one concrete example with real values. Examples are what the tests are built from, so an AC without one is not finished. Add a `Properties:` line to an AC when an invariant holds for all inputs (“the total never goes below zero”).
 
+- **Check the form** with `gp spec` and fix what it reports, so the user is never asked to approve a spec the gate would then refuse.
 - **Ask for approval** with `AskUserQuestion`, using exactly this question: `Approve spec for <item>?` and the options `Approve` and `Request changes`. Show the ACs in the message before the question. On “Request changes”, edit the spec and ask again: the approval is tied to the exact text.
 - Run `gp advance`.
 

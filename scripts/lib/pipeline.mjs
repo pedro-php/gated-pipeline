@@ -55,7 +55,7 @@ export function init(root, { type, item, base }) {
 }
 
 const HINTS = {
-  spec: (s) => `write ${STATE_DIR}/spec.md, then ask the user with AskUserQuestion: "Approve spec for ${s.item}?" (options "Approve" / "Request changes"), then run advance`,
+  spec: (s) => `write ${STATE_DIR}/spec.md, check it with "spec", then ask the user with AskUserQuestion: "Approve spec for ${s.item}?" (options "Approve" / "Request changes"), then run advance`,
   test: () => 'have the test-writer agent write failing tests that cite every AC id, then run advance (it proves RED)',
   implementation: (s) => (s.type === 'hotfix' ? 'fix the problem, then run advance' : 'have the implementer agent make the frozen tests pass, then run advance (it proves GREEN and runs lint, typecheck and build)'),
   validation: () => 'run mutate, kill or justify survivors, run the reviewer agent, prove each blocking finding with a test, then run advance',

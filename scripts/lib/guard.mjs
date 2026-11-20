@@ -49,9 +49,25 @@ function words(command) {
   return out;
 }
 
+// Drops heredoc bodies: their text is data, not shell syntax (a ">" in it is not a redirect).
+export function withoutHeredocs(command) {
+  const out = [];
+  let until = null;
+  for (const line of command.split('\n')) {
+    if (until !== null) {
+      if (line.trim() === until) until = null;
+      continue;
+    }
+    out.push(line);
+    const m = /<<-?\s*(['"]?)([A-Za-z_][A-Za-z0-9_]*)\1/.exec(line);
+    if (m) until = m[2];
+  }
+  return out.join('\n');
+}
+
 function segments(command) {
   const all = [[]];
-  for (const w of words(command)) {
+  for (const w of words(withoutHeredocs(command).replace(/<<-?\s*['"]?[A-Za-z_][A-Za-z0-9_]*['"]?/g, ' '))) {
     if (!w.quoted && /^(&&|\|\||;|\|)$/.test(w.text)) all.push([]);
     else if (!w.quoted && w.text.endsWith(';')) {
       all.at(-1).push({ ...w, text: w.text.slice(0, -1) });

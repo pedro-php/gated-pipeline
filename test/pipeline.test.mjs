@@ -384,6 +384,10 @@ test('cli: a blocked gate exits 1 with the reason; status names the next step', 
   const r = gp(dir, 'advance');
   assert.equal(r.code, 1);
   assert.match(r.out, /^BLOCKED: no spec yet/);
+  write(dir, '.gated/spec.md', '### AC-1: subtract\nWHEN called THEN works\n');
+  assert.match(gp(dir, 'spec').out, /^BLOCKED: the spec is not ready:\n  AC-1 has no "Example:"/);
+  write(dir, '.gated/spec.md', SPEC);
+  assert.match(gp(dir, 'spec').out, /AC-1: subtract\nThe spec is well-formed/);
   const s = gp(dir, 'status');
   assert.equal(s.code, 0);
   assert.match(s.out, /feature "sub" -> stage "spec"[\s\S]*Approve spec for sub\?/);

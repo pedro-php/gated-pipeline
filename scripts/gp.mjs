@@ -2,12 +2,13 @@
 // gated-pipeline CLI. The skills call it; every gate decision is made here.
 //   start <feature|fix|hotfix> <item> [--base <branch>]   new worktree + item
 //   init  <feature|fix|hotfix> <item> [--base <branch>]   item in the current worktree
-//   status [--json] | advance | mutate [--force] | justify <mutant id> <reason>
+//   status [--json] | spec (check the spec's form) | advance | mutate [--force] | justify <mutant id> <reason>
 //   prove <test file> [--finding <id>] | back <spec|test|implementation>
 //   approve <spec|merge> (the user only) | merge | summary
 import { git } from './lib/git.mjs';
 import { openSurvivors } from './lib/mutation.mjs';
 import * as pipeline from './lib/pipeline.mjs';
+import { readSpec } from './lib/spec.mjs';
 import { findRoot, loadState } from './lib/state.mjs';
 import { fail, GateError } from './lib/util.mjs';
 
@@ -52,6 +53,12 @@ async function main() {
       for (const f of state.findings.filter((x) => x.status === 'refuted')) say(`Refuted finding #${f.id}: ${f.text} (test: ${f.test})`);
       return;
     }
+    case 'spec': {
+      const spec = readSpec(itemRoot());
+      if (spec.problems.length) fail(`the spec is not ready:\n  ${spec.problems.join('\n  ')}`);
+      for (const ac of spec.acs) say(`${ac.id}: ${ac.title}`);
+      return say('The spec is well-formed: ready to ask the user for approval.');
+    }
     case 'advance':
       return report(pipeline.advance(itemRoot()));
     case 'mutate': {
@@ -87,7 +94,7 @@ async function main() {
       return say(pipeline.summary(root, pipeline.configFor(root), loadState(root)));
     }
     default:
-      fail('usage: gp.mjs <start|init|status|advance|mutate|justify|prove|back|approve|merge|summary>');
+      fail('usage: gp.mjs <start|init|status|spec|advance|mutate|justify|prove|back|approve|merge|summary>');
   }
 }
 

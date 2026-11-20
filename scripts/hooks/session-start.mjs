@@ -19,7 +19,7 @@ try {
   const lines = [
     `gated-pipeline: this worktree holds the ${state.type} "${state.item}", at stage "${state.stage}" (round ${state.round}).`,
     `Next: ${hint(state)}.`,
-    `Pipeline CLI: node "${gp}" <status|advance|mutate|justify|prove|back|merge>`,
+    `Pipeline CLI: node "${gp}" <status|spec|advance|mutate|justify|prove|back|merge>`,
     ...acs.map((ac) => `${ac.id}: ${ac.title}`),
   ];
   emit({ hookSpecificOutput: { hookEventName: 'SessionStart', additionalContext: lines.join('\n') } });

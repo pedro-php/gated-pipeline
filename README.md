@@ -122,6 +122,7 @@ Claude runs it for you; it is also how you inspect an item.
 
 ```
 node <plugin>/scripts/gp.mjs status           where the item is and what comes next
+                             spec             check the spec's form before asking for approval
                              advance          run the stage's checks and move on
                              mutate [--force] run the mutation gate
                              justify <id> <reason>
