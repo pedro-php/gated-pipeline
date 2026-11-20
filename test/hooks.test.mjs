@@ -4,6 +4,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { PREVIEW_LIMIT } from '../scripts/lib/approvals.mjs';
 import * as pipeline from '../scripts/lib/pipeline.mjs';
 import { loadState, saveState } from '../scripts/lib/state.mjs';
 import { approvals, DEFAULT_CONFIG, gp, hook, IMPL, makeRepo, RED_TEST, SPEC, write } from './helpers.mjs';
@@ -174,7 +175,7 @@ test('spec check: the user is asked only about a spec that someone read cold, an
   assert.match(gp(dir, 'status').out, /Unclear in the spec as last read: AC-1 does sub\(3, 5\)/);
 
   const asked = dialog(dir, 'Approve spec for sub?');
-  assert.match(asked.shown.options[0].preview, /Example: sub\(5, 3\) -> 2\n\n\n---\nStill unclear to a reader who saw only this spec[\s\S]*- AC-1 does sub\(3, 5\) return -2/);
+  assert.match(asked.shown.options[0].preview, /^Still unclear to a reader who saw only this spec[\s\S]*- AC-1 does sub\(3, 5\) return -2[\s\S]*\n---\n\n# Subtract\n[\s\S]*Example: sub\(5, 3\) -> 2\n$/, 'what is still open comes first, then the spec');
   assert.match(asked.note, /spec approval recorded$/);
 
   // the answer to the open point goes into the spec, which is then a new text nobody has read yet
@@ -184,6 +185,47 @@ test('spec check: the user is asked only about a spec that someone read cold, an
   const clean = dialog(dir, 'Approve spec for sub?');
   assert.doesNotMatch(clean.shown.options[0].preview, /Still unclear/);
   assert.match(clean.note, /spec approval recorded$/);
+});
+
+test('approval dialog: a text too long for the dialog is shortened to what fits, most important first, and says so', async () => {
+  // Claude Code drops a preview longer than about 2,000 characters altogether.
+  const { repo, dir } = item();
+  const long = `# Many rules\n\n${Array.from({ length: 30 }, (_, i) => `### AC-${i + 1}: rule number ${i + 1}\nWHEN input ${i + 1} arrives THEN result ${i + 1} is returned.\nSome background that explains this rule at length, so that the whole spec is far too long to show.\nExample: f(${i + 1}) -> ${i + 1}\n`).join('\n')}`;
+  write(dir, '.gated/spec.md', long);
+  const spec = dialog(dir, 'Approve spec for sub?');
+  const preview = spec.shown.options[0].preview;
+  assert.ok(long.length > PREVIEW_LIMIT && preview.length <= PREVIEW_LIMIT, `${preview.length} characters`);
+  assert.match(preview, /^# Many rules\n\nAC-1: rule number 1\n  WHEN input 1 arrives THEN result 1 is returned\.\n  Example: f\(1\) -> 1\nAC-2: /, 'the criteria and their examples, not the background');
+  assert.doesNotMatch(preview, /Some background/);
+  assert.match(preview, /… cut to fit this dialog \(\d+ characters in all\)\. Read the whole spec in \.gated\/spec\.md before approving, or run "gated approve spec" in a terminal/);
+  assert.match(spec.shown.options[0].description, /The preview is a shortened view; if it is cut or missing, read the file first/);
+  assert.match(spec.note, /spec approval recorded$/, 'the approval is still of the whole file');
+  assert.equal(approvals(repo).at(-1).hash, pipeline.approvalSubject(dir, 'spec').hash);
+
+  // the merge dialog: what approving accepts comes before the routine lines
+  const repo2 = makeRepo();
+  const d2 = pipeline.start(repo2, { type: 'feature', item: 'sub' });
+  write(d2, '.gated/spec.md', SPEC);
+  pipeline.approve(d2, 'spec');
+  pipeline.advance(d2);
+  write(d2, 'test/sub.test.mjs', RED_TEST);
+  pipeline.advance(d2);
+  write(d2, 'src/math.mjs', IMPL);
+  for (let i = 0; i < 30; i++) write(d2, `notes/part${i}.md`, 'a note\n');
+  pipeline.advance(d2);
+  const { open } = await pipeline.runMutation(d2);
+  pipeline.justify(d2, open[0].id, `no test can tell them apart, because ${'the difference is only in a log line and '.repeat(12)}nothing else`);
+  hook('stop', { hook_event_name: 'SubagentStop', cwd: d2, agent_type: 'gated-pipeline:reviewer', last_assistant_message: `GATED-REVIEW\nADVISORY: src/math.mjs:2 a name a maintainer may trip over\nEQUIVALENT: ${open[0].id}` });
+  pipeline.advance(d2);
+  write(d2, pipeline.recordFile(pipeline.configFor(d2), loadState(d2)), '# sub\nAC-1 done\n');
+  write(d2, 'CHANGELOG.md', '# Changelog\n- sub\n');
+  pipeline.advance(d2);
+  const merge = dialog(d2, 'Approve merge of sub?').shown.options[0];
+  assert.ok(pipeline.approvalSubject(d2, 'merge').text.length > PREVIEW_LIMIT && merge.preview.length <= PREVIEW_LIMIT);
+  assert.match(merge.preview, /^feature "sub" into development: 34 file\(s\), 1 criteria, 1 round\(s\)\n\nSurviving mutants accepted with a justification \(1\); approving accepts each:\n- src\/math\.mjs:2 Fake -> mutated line 2: no test can tell them apart[^\n]*…\n\nReview findings \(1\):\n- #1 \[advisory\] src\/math\.mjs:2 a name a maintainer may trip over\n\nFiles \(34\):\n/);
+  assert.match(merge.preview, /- … and 22 more\n\n- RED: 1 test file/);
+  assert.match(merge.preview, /… cut to fit this dialog \(\d+ characters in all\)\. The whole evidence is in docs\/items\/[^ ]+\.md, which is part of what you approve\.$/);
+  assert.match(merge.description, /the whole evidence is in docs\/items\//);
 });
 
 test('approval dialog: the merge dialog shows the evidence and every file the item changes', () => {

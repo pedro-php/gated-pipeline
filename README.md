@@ -159,6 +159,8 @@ State is one file per worktree, `.gated/state.json`, kept out of git. Evidence i
 
 An approval is a record of the item, what was approved (spec or merge) and the hash of that content. A spec or a tree with any other hash is not approved. The records are kept apart from the item state, in the repository's git directory (`.git/gated-approvals/`), and the item record says how each approval was given.
 
+The dialog can show about 2,000 characters; Claude Code drops a longer preview altogether. So a long spec is shown as its criteria with their WHEN and Example lines, and the merge preview puts first what approving accepts (justified survivors, review findings, the files), then the gates. A shortened preview says so and names the file with the whole text. The approval is always of the whole file or tree, whatever the preview had room for.
+
 Two things write a record: the hook, when you answer the approval dialog, and you, in a terminal of your own:
 
 ```

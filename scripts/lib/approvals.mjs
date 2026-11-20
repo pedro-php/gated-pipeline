@@ -76,14 +76,38 @@ export function takeShown(root, toolUseId) {
 // hex digits of the hash of what the dialog shows.
 export const QUESTION = /Approve (spec for|merge of) ([a-z0-9-]+)\?/;
 const TAG = /\s*\[(?:spec|tree) ([0-9a-f]{12})\]/;
-const PREVIEW_LIMIT = 12_000;
+// Claude Code shows an option's preview only up to about 2,000 characters; a
+// longer one is replaced by "can't show the full preview" and the user sees
+// nothing of it (measured on 2.1.329: 1,997 characters shown, 2,297 not).
+export const PREVIEW_LIMIT = 1900;
+
+const clip = (line, width) => (line.length > width ? `${line.slice(0, width - 1)}…` : line);
+
+// Fits a text into the preview. Whole when it fits. Otherwise the parts in
+// order, each line clipped, until the room is used up, and a last line that
+// says it is cut and where the whole text is. `parts` are arrays of lines,
+// most important first.
+export function fitPreview(parts, { whole, where, more }) {
+  if (whole.length <= PREVIEW_LIMIT) return whole;
+  const notice = `\n… cut to fit this dialog (${whole.length} characters in all). ${more}`;
+  const room = PREVIEW_LIMIT - notice.length;
+  const out = [];
+  let used = 0;
+  for (const line of parts.flat()) {
+    const text = clip(line, 300);
+    if (used + text.length + 1 > room) break;
+    out.push(text);
+    used += text.length + 1;
+  }
+  return `${out.join('\n')}${notice}`.replaceAll('{where}', where);
+}
 
 // Rewrites one approval question so that the dialog shows the text being
 // approved as the pipeline reads it, not as the model describes it.
 export function presentQuestion(question, what, subject) {
   const short = subject.hash.slice(0, 12);
-  const cut = subject.text.length > PREVIEW_LIMIT;
-  const preview = cut ? `${subject.text.slice(0, PREVIEW_LIMIT)}\n\n… cut here: read the rest in ${subject.where} before approving.` : subject.text;
+  const preview = subject.preview ?? subject.text;
+  const cut = preview !== subject.text;
   const keep = (question.options ?? []).find((o) => /request changes/i.test(o.label ?? ''));
   return {
     ...question,
@@ -92,7 +116,10 @@ export function presentQuestion(question, what, subject) {
     options: [
       {
         label: 'Approve',
-        description: what === 'spec' ? `Approves ${subject.where} exactly as the preview shows it (sha256 ${short}).` : `Approves merging the item exactly as it stands (tree ${short}), with every justified survivor the preview lists.`,
+        description:
+          what === 'spec'
+            ? `Approves ${subject.where} as it is on disk (sha256 ${short}). ${cut ? 'The preview is a shortened view' : 'The preview is that file'}; if it is cut or missing, read the file first.`
+            : `Approves merging the item exactly as it stands (tree ${short}), with every justified survivor. The preview is the pipeline's summary; the whole evidence is in ${subject.where}.`,
         preview,
       },
       { label: 'Request changes', description: keep?.description ?? 'Nothing is approved; say what should change.' },
