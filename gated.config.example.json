@@ -1,0 +1,60 @@
+{
+  "baseBranch": "development",
+  "interview": "always",
+  "interviewMaxRounds": 3,
+  "heavySlots": 2,
+  "docs": {
+    "records": "docs/items",
+    "changelog": "CHANGELOG.md",
+    "paths": ["docs/**", "**/*.md"]
+  },
+  "hotfix": {
+    "checks": ["typecheck", "build", "test"]
+  },
+  "checkTimeoutMinutes": 15,
+  "setup": [
+    "ln -s \"$GATED_MAIN_ROOT/server/node_modules\" server/node_modules",
+    "ln -s \"$GATED_MAIN_ROOT/frontend/node_modules\" frontend/node_modules"
+  ],
+  "packages": [
+    {
+      "name": "server",
+      "root": "server",
+      "source": ["src/**"],
+      "tests": ["**/*.spec.ts", "**/*.test.ts", "test/**"],
+      "commands": {
+        "test": "npx jest {files}",
+        "testAll": "npm test",
+        "lint": "npm run lint",
+        "typecheck": "npm run typecheck",
+        "build": "npm run build"
+      },
+      "mutation": {
+        "adapter": "stryker",
+        "runner": "jest",
+        "concurrency": 4,
+        "timeoutMinutes": 60
+      }
+    },
+    {
+      "name": "frontend",
+      "root": "frontend",
+      "source": ["src/**"],
+      "tests": ["**/*.test.ts", "**/*.test.tsx"],
+      "commands": {
+        "test": "npx vitest run {files}",
+        "lint": "npm run lint",
+        "build": "npm run build"
+      },
+      "mutation": { "adapter": "stryker" }
+    },
+    {
+      "name": "scripts",
+      "root": "scripts",
+      "source": ["**/*.mjs"],
+      "tests": ["**/*.test.mjs"],
+      "commands": { "test": "node --test {files}" },
+      "mutation": false
+    }
+  ]
+}

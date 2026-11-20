@@ -1,0 +1,13 @@
+{
+  "name": "gated-pipeline",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Claude Code plugin: a hook-gated spec -> test -> implementation -> validation -> docs pipeline.",
+  "license": "Apache-2.0",
+  "engines": { "node": ">=20" },
+  "scripts": {
+    "test": "node --test test/*.test.mjs",
+    "test:e2e": "node test/e2e/stryker-jest.e2e.mjs"
+  }
+}

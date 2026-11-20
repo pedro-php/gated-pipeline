@@ -1,0 +1,14 @@
+{
+  "name": "gated-pipeline",
+  "description": "The gated-pipeline plugin: a hook-gated spec -> test -> implementation -> validation -> docs pipeline for Claude Code.",
+  "owner": {
+    "name": "pedro-php"
+  },
+  "plugins": [
+    {
+      "name": "gated-pipeline",
+      "source": "./",
+      "description": "Spec -> test -> implementation -> validation -> docs, with hook-enforced quality gates."
+    }
+  ]
+}

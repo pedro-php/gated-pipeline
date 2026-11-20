@@ -1,0 +1,9 @@
+{
+  "name": "gated-pipeline",
+  "version": "0.1.0",
+  "description": "Spec -> test -> implementation -> validation -> docs, with hook-enforced gates: RED/GREEN proof, diff-scoped mutation testing, fresh-context review, and human approval of the spec and the merge.",
+  "author": { "name": "pedro-php" },
+  "repository": "https://github.com/pedro-php/gated-pipeline",
+  "license": "Apache-2.0",
+  "keywords": ["tdd", "mutation-testing", "quality-gate", "spec-driven", "stryker"]
+}
