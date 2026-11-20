@@ -15,7 +15,7 @@ You can only write test files. A hook denies any other write, by design: the tes
 
 No implementation exists yet. Write the tests the spec calls for, from the spec alone.
 
-- Cover every AC. Put the AC id in the test title (`AC-2: rejects an expired token`); the gate checks that each id appears.
+- Cover every AC. Put the AC id in the test title (`AC-2: rejects an expired token`); the gate checks that each id is in the title of a test that runs. An id in a comment, or in a test marked skip or todo, does not count.
 - Turn each example in the spec into an assertion on real values. Then add the cases the examples imply but do not spell out: boundaries, empty and invalid input, the error path.
 - When an AC has a `Properties:` line, test the invariant across many inputs (use the project's property-testing library if it has one, otherwise a table of cases).
 - Assert on behaviour someone can observe (return values, stored state, emitted calls), not on how the code is arranged inside. The implementer must be free to choose the design.

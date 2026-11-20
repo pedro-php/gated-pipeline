@@ -74,9 +74,9 @@ function move(root, state, to) {
 }
 
 function proveGreen(root, cfg, state, h, staticNames) {
-  const green = checks.greenCheck(root, cfg, h);
+  const green = checks.greenCheck(root, cfg, h, readSpec(root).acs);
   const stat = checks.staticChecks(root, cfg, h, staticNames);
-  state.evidence.green = { codeHash: h.codeHash, sourceHash: h.sourceHash, base: mergeBase(root, state.base), runs: green.runs, static: stat.results, at: new Date().toISOString() };
+  state.evidence.green = { codeHash: h.codeHash, sourceHash: h.sourceHash, base: mergeBase(root, state.base), runs: green.runs, tests: green.tests, acs: green.acs, static: stat.results, at: new Date().toISOString() };
 }
 
 export function advance(root) {
@@ -98,9 +98,9 @@ export function advance(root) {
       const spec = readSpec(root);
       if (!approvalOf(root, state, 'spec', spec.hash)) fail('the spec changed after the user approved it: restore it, or go "back spec" and ask again');
       if (h.sourceHash !== state.snapshot?.sourceHash) fail('non-test files changed during the test stage; revert them (tests come before the implementation)');
-      const coverage = checks.acCoverage(root, spec.acs, h);
       const red = checks.redCheck(root, cfg, state, h);
-      state.evidence.red = { ...red, acs: coverage.acs, round: state.round, at: new Date().toISOString() };
+      const coverage = checks.acCoverage(root, spec.acs, h, red.cases);
+      state.evidence.red = { files: red.files, acs: coverage.acs, round: state.round, at: new Date().toISOString() };
       state.frozenTests = checks.freeze(root, h);
       break;
     }
@@ -300,7 +300,9 @@ export function evidenceSection(state, { specApproval = null } = {}) {
   if (specApproval) lines.push(`- Spec approved by the user: ${describeApproval(specApproval)}`);
   if (e.red) lines.push(`- RED: ${e.red.files.length} test file(s) failed before the implementation (${e.red.files.map((f) => f.path).join(', ')})`);
   if (e.green) {
-    lines.push(`- GREEN: ${e.green.runs.length ? e.green.runs.map((r) => `${r.package} passed`).join(', ') : 'no test run'}`);
+    lines.push(`- GREEN: ${e.green.runs.length ? e.green.runs.map((r) => `${r.package} passed`).join(', ') : 'no test run'}${e.green.tests ? ` (${e.green.tests.passed} test(s) ran and passed${e.green.tests.skipped ? `, ${e.green.tests.skipped} in the same files did not run` : ''})` : ''}`);
+    const before = { failed: 'a test naming it failed', passed: 'its tests passed already, so they pin behaviour that held', unknown: 'its test file failed as a whole' };
+    if (e.green.acs && e.red?.acs?.[0]?.red) for (const ac of e.red.acs) lines.push(`- ${ac.id}: before the implementation ${before[ac.red]}; after it${e.green.acs.includes(ac.id) ? ' a test naming it runs and passes' : ' not checked per test'}`);
     for (const s of e.green.static) lines.push(`- ${s.check} (${s.package}): ${s.status}`);
   }
   if (e.mutation) {

@@ -5,6 +5,7 @@ import { classify, loadConfig, packageOf } from '../scripts/lib/config.mjs';
 import { bashWriteTargets, decideBash, decidePath, decideRecords, decideRecordsPath } from '../scripts/lib/guard.mjs';
 import { parseReview } from '../scripts/lib/review.mjs';
 import { parseSpec, specProblems } from '../scripts/lib/spec.mjs';
+import { parseJestJson, parseJunit } from '../scripts/lib/test-report.mjs';
 import { globToRegExp } from '../scripts/lib/util.mjs';
 import { makeRepo } from './helpers.mjs';
 
@@ -124,6 +125,45 @@ test('bash: no command may approve, or reach the approval records or the state f
   }
   assert.match(decideRecordsPath('/r/.git/gated-approvals/sub.jsonl'), /approvals are recorded only/);
   assert.equal(decideRecordsPath('/r/src/gated-approvals.ts'), null);
+});
+
+test('test reports: JUnit XML and the Jest/Vitest JSON give one result per test', () => {
+  const xml = `<?xml version="1.0"?><testsuites>
+    <testcase name="AC-1: adds" time="0.1" classname="test" file="/r/a.test.mjs"/>
+    <testcase name="AC-2: fails &lt;on> &quot;purpose&quot; &amp; more" classname="test"><failure type="x" message="3 == 4">trace</failure></testcase>
+    <testcase name="AC-3: skipped" classname="test"><skipped type="skipped"/></testcase>
+    <testsuite name="group"><testcase name='AC-5: nested' classname='group'/></testsuite>
+    <testcase name="test/b.test.mjs" classname="test"><error message="cannot load"/></testcase>
+  </testsuites>`;
+  assert.deepEqual(parseJunit(xml), [
+    { name: 'test AC-1: adds', status: 'passed' },
+    { name: 'test AC-2: fails <on> "purpose" & more', status: 'failed' },
+    { name: 'test AC-3: skipped', status: 'skipped' },
+    { name: 'group AC-5: nested', status: 'passed' },
+    { name: 'test test/b.test.mjs', status: 'failed' },
+  ]);
+  const json = {
+    testResults: [
+      { name: '/r/a.test.ts', status: 'failed', assertionResults: [{ ancestorTitles: ['math'], title: 'AC-1: adds', fullName: 'math AC-1: adds', status: 'passed' }, { ancestorTitles: ['math'], title: 'AC-2: subtracts', status: 'failed' }, { fullName: 'AC-3: later', status: 'todo' }, { fullName: 'AC-4: off', status: 'pending' }] },
+      { name: '/r/b.test.ts', status: 'failed', message: 'Cannot find module', assertionResults: [] },
+    ],
+  };
+  assert.deepEqual(parseJestJson(json), [
+    { name: 'math AC-1: adds', status: 'passed' },
+    { name: 'math AC-2: subtracts', status: 'failed' },
+    { name: 'AC-3: later', status: 'skipped' },
+    { name: 'AC-4: off', status: 'skipped' },
+  ]);
+});
+
+test('config: a per-test report needs a known format and a {report} in the test command', () => {
+  const load = (pkg) => {
+    const repo = makeRepo({ packages: [{ name: 'app', ...pkg }] });
+    return loadConfig(repo);
+  };
+  assert.throws(() => load({ commands: { test: 'npx jest {files}' }, testReport: 'jest' }), /must contain \{report\}/);
+  assert.throws(() => load({ commands: { test: 'x {files} {report}' }, testReport: 'tap' }), /"testReport" is one of jest, vitest, junit/);
+  assert.equal(load({ commands: { test: 'npx jest {files} --json --outputFile={report}' }, testReport: 'jest' }).packages[0].testReport, 'jest');
 });
 
 test('review block: findings are read by kind; no block means no review', () => {

@@ -44,7 +44,7 @@ write(
   JSON.stringify({
     setup: ['ln -s "$GATED_MAIN_ROOT/node_modules" node_modules'],
     docs: { changelog: false },
-    packages: [{ name: 'app', source: ['src/**'], tests: ['test/**'], commands: { test: 'npx jest {files}' }, mutation: { adapter: 'stryker', runner: 'jest', concurrency: 2 } }],
+    packages: [{ name: 'app', source: ['src/**'], tests: ['test/**'], commands: { test: 'npx jest {files} --json --outputFile={report}' }, testReport: 'jest', mutation: { adapter: 'stryker', runner: 'jest', concurrency: 2 } }],
   }),
 );
 write(repo, 'stryker.config.mjs', 'export default { jest: { enableFindRelatedTests: false } };\n');
@@ -62,12 +62,16 @@ assert.equal(gp(dir, 'advance').status, 0);
 write(dir, 'test/max.test.js', testFile('AC-1: max', 'expect(c.max(2, 3)).toBe(3); expect(c.max(3, 2)).toBe(3);'));
 write(dir, 'test/clamp.test.js', testFile('AC-2: clamp', 'expect(c.clamp(5, 0, 3)).toBe(3); expect(c.clamp(-1, 0, 3)).toBe(0);'));
 assert.equal(gp(dir, 'advance').status, 0, 'RED');
+const stateNow = () => JSON.parse(fs.readFileSync(path.join(dir, '.gated/state.json'), 'utf8'));
+assert.deepEqual(stateNow().evidence.red.acs, [{ id: 'AC-1', red: 'failed' }, { id: 'AC-2', red: 'failed' }], "Jest's JSON report gives a result per test");
 write(
   dir,
   'src/calc.js',
   'function add(a, b) { return a + b; }\nfunction max(a, b) { return a > b ? a : b; }\nfunction clamp(n, lo, hi) {\n  if (n < lo) return lo;\n  if (n > hi) return hi;\n  return n;\n}\nmodule.exports = { add, max, clamp };\n',
 );
 assert.equal(gp(dir, 'advance').status, 0, 'GREEN');
+assert.deepEqual(stateNow().evidence.green.tests, { passed: 2, skipped: 0 });
+assert.deepEqual(stateNow().evidence.green.acs, ['AC-1', 'AC-2']);
 
 const t0 = Date.now();
 const mutateRun = gp(dir, 'mutate');

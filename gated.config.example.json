@@ -23,12 +23,13 @@
       "source": ["src/**"],
       "tests": ["**/*.spec.ts", "**/*.test.ts", "test/**"],
       "commands": {
-        "test": "npx jest {files}",
+        "test": "npx jest {files} --json --outputFile={report}",
         "testAll": "npm test",
         "lint": "npm run lint",
         "typecheck": "npm run typecheck",
         "build": "npm run build"
       },
+      "testReport": "jest",
       "mutation": {
         "adapter": "stryker",
         "runner": "jest",
@@ -42,10 +43,11 @@
       "source": ["src/**"],
       "tests": ["**/*.test.ts", "**/*.test.tsx"],
       "commands": {
-        "test": "npx vitest run {files}",
+        "test": "npx vitest run {files} --reporter=json --outputFile={report}",
         "lint": "npm run lint",
         "build": "npm run build"
       },
+      "testReport": "vitest",
       "mutation": { "adapter": "stryker" }
     },
     {
@@ -53,7 +55,8 @@
       "root": "scripts",
       "source": ["**/*.mjs"],
       "tests": ["**/*.test.mjs"],
-      "commands": { "test": "node --test {files}" },
+      "commands": { "test": "node --test --test-reporter=spec --test-reporter-destination=stdout --test-reporter=junit --test-reporter-destination={report} {files}" },
+      "testReport": "junit",
       "mutation": false
     }
   ]

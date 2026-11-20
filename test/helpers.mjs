@@ -31,6 +31,11 @@ export const DEFAULT_CONFIG = {
   ],
 };
 
+// The same package, with per-test results: node's own JUnit reporter writes them to {report}.
+export const REPORTING_CONFIG = structuredClone(DEFAULT_CONFIG);
+REPORTING_CONFIG.packages[0].commands.test = 'node --test --test-reporter=spec --test-reporter-destination=stdout --test-reporter=junit --test-reporter-destination={report} {files}';
+REPORTING_CONFIG.packages[0].testReport = 'junit';
+
 // A repository on `development` with src/math.mjs and a changelog, committed.
 export function makeRepo(config = DEFAULT_CONFIG) {
   const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'gated-test-')));
