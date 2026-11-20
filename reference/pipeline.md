@@ -55,7 +55,7 @@ The goal is a spec the user has read and approved, precise enough that someone w
 The goal is tests that fail now, for the right reason, and will pass only when the spec is met.
 
 - Delegate to the `gated-pipeline:test-writer` agent. Tell it the item, where the spec is, and which package the tests belong to. It writes the tests from the spec, not from an implementation, which is why this stage comes first.
-- Every AC must be cited by id in a test title (`AC-1: rejects an empty name`). `gp advance` checks it.
+- Every AC must be cited by id in a test title (`AC-1: rejects an empty name`). `gp advance` checks it. When the package reports per-test results (`testReport` in `gated.config.json`), the title has to belong to a test that runs: a comment, a `skip` or a `todo` does not count, here or at GREEN.
 - Run `gp advance`. It runs each new test file and requires it to **fail** (RED). A test that already passes proves nothing about code that does not exist yet. On success the test files are frozen: their hashes are recorded.
 - Commit (`test(<item>): failing tests for AC-1..n`).
 

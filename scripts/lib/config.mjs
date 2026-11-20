@@ -1,6 +1,7 @@
 // Project configuration: `gated.config.json` at the repository root.
 import fs from 'node:fs';
 import path from 'node:path';
+import { FORMATS } from './test-report.mjs';
 import { fail, matchesAny } from './util.mjs';
 
 export const CONFIG_FILE = 'gated.config.json';
@@ -23,6 +24,8 @@ const PACKAGE_DEFAULTS = {
   // test: runs the given test files, `{files}` is replaced by their paths.
   // testAll, lint, typecheck, build: optional whole-package commands.
   commands: {},
+  // 'jest' | 'vitest' | 'junit': the per-test report `commands.test` writes to `{report}`.
+  testReport: undefined,
   // false = this package has no mutation gate. Otherwise { adapter, ... }.
   mutation: undefined,
 };
@@ -73,7 +76,11 @@ export function loadConfig(root) {
     root: (p.root ?? '.').replace(/\/+$/, '') || '.',
     commands: { ...p.commands },
   }));
-  for (const p of cfg.packages) if (!p.name) fail(`${CONFIG_FILE}: every package needs a "name"`);
+  for (const p of cfg.packages) {
+    if (!p.name) fail(`${CONFIG_FILE}: every package needs a "name"`);
+    if (p.testReport && !FORMATS.includes(p.testReport)) fail(`${CONFIG_FILE}: package "${p.name}": "testReport" is one of ${FORMATS.join(', ')}`);
+    if (p.testReport && !p.commands.test?.includes('{report}')) fail(`${CONFIG_FILE}: package "${p.name}": with "testReport", "commands.test" must contain {report}, the file the runner writes its report to`);
+  }
   return cfg;
 }
 

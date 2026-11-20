@@ -5,7 +5,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import * as pipeline from '../scripts/lib/pipeline.mjs';
 import { loadState, saveState, updateState } from '../scripts/lib/state.mjs';
-import { approvals, commit, DEFAULT_CONFIG, gp, hook, IMPL, makeRepo, RED_TEST, sh, SPEC, write } from './helpers.mjs';
+import { approvals, commit, DEFAULT_CONFIG, gp, hook, IMPL, makeRepo, RED_TEST, REPORTING_CONFIG, sh, SPEC, write } from './helpers.mjs';
 
 const blocked = (fn, pattern) => assert.throws(fn, (e) => e.name === 'Error' && pattern.test(e.message) ? true : assert.fail(`unexpected: ${e.message}`));
 const stage = (dir) => loadState(dir).stage;
@@ -110,6 +110,68 @@ test('test gate: every criterion is cited, every new test file fails, and no cod
   assert.equal(state.stage, 'implementation');
   assert.deepEqual(Object.keys(state.frozenTests), ['test/sub.test.mjs']);
   assert.deepEqual(state.evidence.red.files, [{ path: 'test/sub.test.mjs', code: 1 }]);
+});
+
+const SPEC_2 = `${SPEC}\n### AC-2: add still works\nWHEN add(1, 2) is called THEN it returns 3.\nExample: add(1, 2) -> 3\n`;
+const T = "import test from 'node:test';\nimport assert from 'node:assert';\nimport * as math from '../src/math.mjs';\n";
+const AC1 = "test('AC-1: sub(5, 3) is 2', () => assert.equal(math.sub(5, 3), 2));\n";
+const AC2 = "test('AC-2: add(1, 2) is 3', () => assert.equal(math.add(1, 2), 3));\n";
+
+function reportingItem() {
+  const repo = makeRepo(REPORTING_CONFIG);
+  const dir = pipeline.start(repo, { type: 'feature', item: 'sub' });
+  write(dir, '.gated/spec.md', SPEC_2);
+  pipeline.approve(dir, 'spec');
+  pipeline.advance(dir);
+  return dir;
+}
+
+test('per-test results: a criterion counts only when a test that runs has it in its title', () => {
+  const dir = reportingItem();
+  write(dir, 'test/sub.test.mjs', `${T}// AC-2: add still works\n${AC1}`);
+  blocked(() => pipeline.advance(dir), /no test cites AC-2: name the criterion in the test title \(e\.g\. "AC-1: …"\); a comment does not count/);
+  write(dir, 'test/sub.test.mjs', `${T}${AC1}test.skip('AC-2: add(1, 2) is 3', () => {});\n`);
+  blocked(() => pipeline.advance(dir), /AC-2: cited only by tests that do not run \(skipped or todo\)/);
+  write(dir, 'test/sub.test.mjs', `${T}${AC1}test.todo('AC-2: add(1, 2) is 3');\n`);
+  blocked(() => pipeline.advance(dir), /AC-2: cited only by tests that do not run/);
+
+  write(dir, 'test/sub.test.mjs', `${T}${AC1}${AC2}`);
+  const red = pipeline.advance(dir);
+  assert.deepEqual(red.evidence.red.acs, [{ id: 'AC-1', red: 'failed' }, { id: 'AC-2', red: 'passed' }], 'each criterion is recorded as it stood before the implementation');
+
+  write(dir, 'src/math.mjs', IMPL);
+  const green = pipeline.advance(dir);
+  assert.deepEqual(green.evidence.green.tests, { passed: 2, skipped: 0 });
+  const evidence = pipeline.summary(dir, pipeline.configFor(dir), green);
+  assert.match(evidence, /GREEN: app passed \(2 test\(s\) ran and passed\)/);
+  assert.match(evidence, /- AC-1: before the implementation a test naming it failed; after it a test naming it runs and passes/);
+  assert.match(evidence, /- AC-2: before the implementation its tests passed already, so they pin behaviour that held; after it/);
+});
+
+test('per-test results: a test file that cannot load yet is RED by its text, and GREEN then needs the titles', () => {
+  const dir = reportingItem();
+  // a named import that does not exist yet: the whole file fails before any test is known
+  const named = "import test from 'node:test';\nimport assert from 'node:assert';\nimport { add, sub } from '../src/math.mjs';\n";
+  write(dir, 'test/sub.test.mjs', `${named}// AC-1 and AC-2\ntest('subtracts', () => assert.equal(sub(5, 3), 2));\ntest('adds', () => assert.equal(add(1, 2), 3));\n`);
+  const red = pipeline.advance(dir);
+  assert.deepEqual(red.evidence.red.acs, [{ id: 'AC-1', red: 'unknown' }, { id: 'AC-2', red: 'unknown' }]);
+  write(dir, 'src/math.mjs', IMPL);
+  blocked(() => pipeline.advance(dir), /no test that ran and passed names AC-1, AC-2/);
+});
+
+test('per-test results: a failing run names the tests that failed, and a run with no test is not GREEN', () => {
+  const dir = reportingItem();
+  write(dir, 'test/sub.test.mjs', `${T}${AC1}${AC2}`);
+  pipeline.advance(dir);
+  blocked(() => pipeline.advance(dir), /not GREEN in app:\n  failing: test AC-1: sub\(5, 3\) is 2\n/);
+
+  const config = structuredClone(REPORTING_CONFIG);
+  config.packages[0].commands.test = 'echo "<testsuites></testsuites>" > {report}; true';
+  const repo = makeRepo(config);
+  const d2 = pipeline.start(repo, { type: 'hotfix', item: 'quick' });
+  write(d2, 'src/math.mjs', IMPL);
+  write(d2, 'test/quick.test.mjs', `${T}${AC1}`);
+  blocked(() => pipeline.advance(d2), /app: the run passed without running a single test/);
 });
 
 test('file names with accents are tracked like any other', () => {

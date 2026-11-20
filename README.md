@@ -15,8 +15,8 @@ Claude writes the spec with you, writes failing tests from it, implements until 
 | Stage | Who works | The gate (`gp advance`) passes when |
 |---|---|---|
 | **Spec** | Claude interviews you and writes numbered acceptance criteria, each with a concrete example | you approved that exact text |
-| **Test** | `test-writer` agent, from the spec alone | every criterion is cited by a test, and every new test file **fails** (RED) |
-| **Implementation** | `implementer` agent | the tests are byte-identical to the ones frozen at RED and now **pass** (GREEN); lint, typecheck and build pass; no tool configuration was changed |
+| **Test** | `test-writer` agent, from the spec alone | every criterion is cited by a test that runs, and every new test file **fails** (RED) |
+| **Implementation** | `implementer` agent | the tests are byte-identical to the ones frozen at RED and now **pass** (GREEN), each criterion by a test that ran; lint, typecheck and build pass; no tool configuration was changed |
 | **Validation** | mutation tool, `reviewer` agent, `test-writer` | no mutant on the changed lines survives without a killing test or a written justification; every blocking review finding was proven or refuted by a test |
 | **Docs** | Claude | the item record and the changelog entry exist; the pipeline adds its evidence to the record |
 | **Merge** | you | you approved that exact tree |
@@ -48,11 +48,12 @@ Add `gated.config.json` at the repository root and commit it. [`gated.config.exa
       "source": ["src/**"],
       "tests": ["**/*.test.ts"],
       "commands": {
-        "test": "npx jest {files}",
+        "test": "npx jest {files} --json --outputFile={report}",
         "lint": "npm run lint",
         "typecheck": "npm run typecheck",
         "build": "npm run build"
       },
+      "testReport": "jest",
       "mutation": { "adapter": "stryker", "runner": "jest" }
     }
   ]
@@ -82,8 +83,29 @@ Per package:
 | `source`, `tests` | globs (`**`, `*`, `?`) for source and test files. Test helpers and fixtures belong under `tests` |
 | `protected` | tool configuration no item may change (defaults cover Jest, Vitest, Stryker, TypeScript and ESLint config files) |
 | `commands.test` | runs the given test files; `{files}` is replaced by their paths. **Required** |
+| `testReport` | `jest`, `vitest` or `junit`: the per-test report `commands.test` writes to `{report}` (below). Optional, recommended |
 | `commands.testAll`, `lint`, `typecheck`, `build` | optional whole-package checks |
 | `mutation` | the mutation gate (below), or `false` to state the package has none. A touched package must say one or the other |
+
+### Per-test results
+
+Without `testReport`, a test run speaks only through its exit code, and a criterion counts as cited when its id appears anywhere in a test file. That lets through a criterion named only in a comment, or in a test marked `skip` or `todo`.
+
+With `testReport`, the gates read one result per test from the file the runner writes to `{report}`:
+
+- **RED**: a criterion must be in the title of a test that runs. The item record says how each criterion stood before the implementation: a test naming it failed, or its tests passed already (they pin behaviour that already held).
+- **GREEN**: each criterion must be in the title of a test that ran and passed, and a run that executed no test is not a pass.
+
+A test file that cannot load yet, because it imports a module the implementation will add, has no titles to read at RED; it is searched as text there, and held to its titles at GREEN.
+
+| Runner | `commands.test` | `testReport` |
+|---|---|---|
+| Jest | `npx jest {files} --json --outputFile={report}` | `jest` |
+| Vitest | `npx vitest run {files} --reporter=json --outputFile={report}` | `vitest` |
+| node:test | `node --test --test-reporter=spec --test-reporter-destination=stdout --test-reporter=junit --test-reporter-destination={report} {files}` | `junit` |
+| pytest, Go, Rust, others | any command that writes JUnit XML to `{report}`, such as `pytest {files} --junitxml={report}` | `junit` |
+
+Keep a human-readable reporter on standard output as well: the tail of it is what Claude sees when a gate fails.
 
 ### Mutation testing
 
