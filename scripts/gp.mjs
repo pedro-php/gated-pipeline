@@ -4,7 +4,8 @@
 //   init  <feature|fix|hotfix> <item> [--base <branch>]   item in the current worktree
 //   status [--json] | spec (check the spec's form) | advance | mutate [--force] | justify <mutant id> <reason>
 //   prove <test file> [--finding <id>] | back <spec|test|implementation>
-//   approve <spec|merge> (the user only) | merge | summary
+//   approve <spec|merge> (the user only, in a terminal) | merge | summary
+import readline from 'node:readline/promises';
 import { git } from './lib/git.mjs';
 import { openSurvivors } from './lib/mutation.mjs';
 import * as pipeline from './lib/pipeline.mjs';
@@ -85,10 +86,23 @@ async function main() {
     }
     case 'back':
       return report(pipeline.back(itemRoot(), a));
-    case 'approve':
-      return report(pipeline.approve(itemRoot(), a));
-    case 'merge':
-      return report(pipeline.merge(itemRoot()));
+    case 'approve': {
+      // For the user, in their own terminal: the model's shell has no terminal to answer from.
+      const root = itemRoot();
+      if (!process.stdin.isTTY || !process.stdout.isTTY) fail('"approve" is for the user, typed in a terminal of their own (it shows the text and asks for confirmation there). Inside Claude Code, approval is given by answering the approval question.');
+      const subject = pipeline.approvalSubject(root, a);
+      say(`${subject.text}\n---\n${a === 'spec' ? subject.where : 'the item tree'} · sha256 ${subject.hash.slice(0, 12)}`);
+      const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
+      const typed = await rl.question(`Type the item name (${subject.state.item}) to approve this ${a}: `);
+      rl.close();
+      if (typed.trim() !== subject.state.item) fail('not approved');
+      return report(pipeline.approve(root, a, { via: 'terminal', expect: subject.hash }));
+    }
+    case 'merge': {
+      const state = pipeline.merge(itemRoot());
+      if (state.evidence.integration) say(`"${state.base}" had moved since the item was proven: the merged result was tested again (the item's tests and the package checks) before it was merged.`);
+      return report(state);
+    }
     case 'summary': {
       const root = itemRoot();
       return say(pipeline.summary(root, pipeline.configFor(root), loadState(root)));

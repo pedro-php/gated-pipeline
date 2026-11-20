@@ -51,6 +51,12 @@ export function gp(cwd, ...args) {
   return { code: r.status, out: `${r.stdout}${r.stderr}` };
 }
 
+// The approval records of a repository (they live in its shared git directory).
+export const approvals = (repo, item = 'sub') => {
+  const file = path.join(repo, '.git/gated-approvals', `${item}.jsonl`);
+  return fs.existsSync(file) ? fs.readFileSync(file, 'utf8').trim().split('\n').map((l) => JSON.parse(l)) : [];
+};
+
 export function hook(name, input) {
   const r = spawnSync('node', [path.join(PLUGIN, 'scripts/hooks', `${name}.mjs`)], { input: JSON.stringify(input), encoding: 'utf8', env: GIT_ENV });
   return { code: r.status, json: r.stdout ? JSON.parse(r.stdout) : null, stderr: r.stderr };
