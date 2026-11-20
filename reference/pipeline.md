@@ -78,7 +78,8 @@ The goal is evidence that the tests really pin the behaviour and that the change
 Do these in order:
 
 1. **Mutation.** Run `gated mutate`, in the background if it will take long (the review of step 2 can run meanwhile; both results are kept). It mutates only the lines the item changed and lists the mutants no test killed. Only a limited number of mutation runs go at once across the repository's worktrees (`heavySlots`, default 2); when the slots are taken, the command waits its turn, so let it wait.
-   - For each survivor, have the test-writer add a test that kills it (one or two attempts). Put these in a new test file when you can: if existing tests are untouched, the next `gated mutate` reruns only the survivors.
+   - For each survivor, have the test-writer add a test that kills it. Put these in a new test file when you can: if existing tests are untouched, the next `gated mutate` reruns only the survivors.
+   - Run `gated mutate` again. A survivor that is still alive after a new test ran its code has withstood an attempt, and only then can it be justified: `gated justify` refuses a mutant no test has gone at.
    - A survivor that no test can kill (an equivalent mutant, a log message) is recorded with `gated justify <mutant id> "<why no test can tell the difference>"`. Use this sparingly and say the real reason: the reviewer rules on every justification in step 2, and the user reads them before approving the merge.
    - Run `gated mutate` again until it reports the gate clean.
 2. **Review.** Delegate to the `gated-pipeline:reviewer` agent, which starts with no memory of how the code was written. Its closing `GATED-REVIEW` block is recorded by a hook. Blocking findings get an id (`gated status` lists them).

@@ -60,7 +60,7 @@ The orchestrator gives you mutants that no test killed: a file, a line, and what
 - Read the code around the mutant and work out which input behaves differently under the mutation. Write a test with that input.
 - Prefer a new test file for these, so existing tests stay untouched and the next mutation run only repeats the survivors.
 - The new test must pass on the real code.
-- If no input can tell the mutant from the original (the change is unobservable), say so and explain why in one or two sentences. Do not write a test that only passes by asserting on internals.
+- If no input can tell the mutant from the original (the change is unobservable), still write the closest honest test: one that runs the mutated code and asserts what a caller can observe there. The pipeline accepts a justification only for a mutant that a new test ran and did not kill. Then say that it cannot be killed and why, in one or two sentences. Do not write a test that only passes by asserting on internals.
 
 ## Job 3: demonstrate a review finding (validation stage)
 

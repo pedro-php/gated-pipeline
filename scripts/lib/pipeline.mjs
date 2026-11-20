@@ -402,7 +402,7 @@ export function evidenceSection(state, { specApproval = null } = {}) {
   const justified = (e.mutation?.survivors ?? []).filter((s) => state.justified[s.id]);
   if (justified.length) {
     lines.push('', '### Surviving mutants accepted with a justification', '', 'Approving the merge accepts each of these.', '');
-    for (const s of justified) lines.push(`- \`${s.id}\` ${s.mutator} -> \`${s.replacement}\`: ${state.justified[s.id]}${state.judged?.[s.id] ? ' (the reviewer agreed that no test can tell them apart)' : ''}`);
+    for (const s of justified) lines.push(`- \`${s.id}\` ${s.mutator} -> \`${s.replacement}\`: ${state.justified[s.id]} (it withstood ${state.attempts?.[s.id] ?? 0} attempt(s) to kill it${state.judged?.[s.id] ? '; the reviewer agreed that no test can tell them apart' : ''})`);
   }
   const shown = state.findings.filter((f) => f.status !== 'open');
   if (shown.length) {
@@ -445,9 +445,27 @@ export async function runMutation(root, { force = false } = {}) {
   const started = loadState(root);
   if (started.stage !== 'validation') fail('"mutate" belongs to the validation stage');
   const { reused, ...evidence } = await mutate(root, configFor(root), started, { force });
+  // A survivor has withstood an attempt to kill it when it is still alive
+  // after the tests changed, the code being the same. Where the tool reports
+  // which tests ran the mutated code, the attempt must be one that ran it: a
+  // new test elsewhere is no attempt on this mutant.
+  const prev = started.evidence.mutation;
+  const sameSource = prev?.sourceHash === evidence.sourceHash;
+  const withstood = [];
+  if (!reused && prev?.complete && evidence.complete && sameSource && prev.codeHash !== evidence.codeHash) {
+    const before = new Map(prev.survivors.map((s) => [s.id, s]));
+    for (const s of evidence.survivors) {
+      const was = before.get(s.id);
+      if (!was || started.justified[s.id]) continue;
+      if (s.coveredBy == null || was.coveredBy == null || s.coveredBy > was.coveredBy) withstood.push(s.id);
+    }
+  }
   // The run can take a long time, and a review or a justification may have
   // been recorded meanwhile: the result goes into the state as it is now.
   const state = updateState(root, (s) => {
+    if (!sameSource) s.attempts = {};
+    s.attempts ??= {};
+    for (const id of withstood) s.attempts[id] = (s.attempts[id] ?? 0) + 1;
     s.evidence.mutation = evidence;
     logEvent(s, 'mutated', { total: evidence.total, survivors: evidence.survivors.length, reused: Boolean(reused), incremental: evidence.incremental });
   });
@@ -459,6 +477,8 @@ export function justify(root, id, reason) {
   if ((reason ?? '').trim().length < 20) fail('give the reason no test can kill this mutant (a full sentence)');
   return updateState(root, (state) => {
     if (!(state.evidence.mutation?.survivors ?? []).some((s) => s.id === id)) fail(`"${id}" is not a surviving mutant of the last run`);
+    // A justification says no test can kill the mutant. Nobody can say that before a test has tried.
+    if (!state.attempts?.[id]) fail(`no test has tried to kill "${id}" yet. Have the test-writer add a test for it (a new test that runs the mutated code, with the input that should behave differently) and run mutate again. A mutant that is still alive after that can be justified.`);
     // A new reason needs a new ruling.
     delete state.judged?.[id];
     delete state.rejected?.[id];

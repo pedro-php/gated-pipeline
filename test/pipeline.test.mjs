@@ -298,16 +298,45 @@ test('validation gate: a survivor passes with a real justification, which the su
   const { open } = await pipeline.runMutation(dir);
   blocked(() => pipeline.justify(dir, open[0].id, 'equivalent'), /full sentence/);
   blocked(() => pipeline.justify(dir, 'nope', 'this mutant only changes a log message'), /not a surviving mutant/);
+  blocked(() => pipeline.justify(dir, open[0].id, 'this mutant only changes a log message'), /no test has tried to kill "src\/math\.mjs:2[^"]*" yet/);
+  write(dir, 'test/try.test.mjs', "import test from 'node:test';\ntest('goes at the mutant, in vain', () => {});\n");
+  await pipeline.runMutation(dir);
   pipeline.justify(dir, open[0].id, 'this mutant only changes a log message');
   review(dir, `GATED-REVIEW\nEQUIVALENT: ${open[0].id}`);
   assert.equal(pipeline.advance(dir).stage, 'docs');
-  assert.match(pipeline.summary(dir, pipeline.configFor(dir), loadState(dir)), /accepted with a justification[\s\S]*only changes a log message \(the reviewer agreed that no test can tell them apart\)/);
+  assert.match(pipeline.summary(dir, pipeline.configFor(dir), loadState(dir)), /accepted with a justification[\s\S]*only changes a log message \(it withstood 1 attempt\(s\) to kill it; the reviewer agreed that no test can tell them apart\)/);
+});
+
+test('validation gate: an attempt on a mutant is a new test that runs the mutated code, where the tool can tell', async () => {
+  const { dir } = itemAt('validation');
+  process.env.FAKE_MUTATOR_COVERAGE = '1';
+  try {
+    const { open } = await pipeline.runMutation(dir);
+    const id = open[0].id;
+    const reason = 'this mutant only changes a log message';
+    // the same tests again are no attempt
+    assert.equal((await pipeline.runMutation(dir)).reused, true);
+    blocked(() => pipeline.justify(dir, id, reason), /no test has tried to kill/);
+    // a new test that never runs the mutated line is no attempt on this mutant
+    write(dir, 'test/elsewhere.test.mjs', "import test from 'node:test';\ntest('about something else', () => {});\n");
+    await pipeline.runMutation(dir);
+    blocked(() => pipeline.justify(dir, id, reason), /a new test that runs the mutated code/);
+    // one that runs it and still does not kill it is
+    write(dir, 'test/try.test.mjs', "import test from 'node:test';\ntest('covers:src/math.mjs:2', () => {});\n");
+    assert.match(gp(dir, 'mutate').out, /SURVIVED src\/math\.mjs:2[^\n]*\(withstood 1 attempt\(s\): kill it, or justify it\)/);
+    assert.equal(loadState(dir).attempts[id], 1);
+    pipeline.justify(dir, id, reason);
+  } finally {
+    delete process.env.FAKE_MUTATOR_COVERAGE;
+  }
 });
 
 test('validation gate: a justification holds only when the reviewer agrees; a rejected one makes the mutant open again', async () => {
   const { dir } = itemAt('validation');
   const { open } = await pipeline.runMutation(dir);
   const id = open[0].id;
+  write(dir, 'test/try.test.mjs', "import test from 'node:test';\ntest('goes at the mutant, in vain', () => {});\n");
+  await pipeline.runMutation(dir);
   pipeline.justify(dir, id, 'this mutant only changes a log message');
   review(dir, 'GATED-REVIEW');
   blocked(() => pipeline.advance(dir), /1 justification\(s\) the reviewer has not ruled on[\s\S]*only changes a log message/);
