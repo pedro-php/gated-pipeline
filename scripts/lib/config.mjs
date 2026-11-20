@@ -26,6 +26,8 @@ const PACKAGE_DEFAULTS = {
   commands: {},
   // 'jest' | 'vitest' | 'junit': the per-test report `commands.test` writes to `{report}`.
   testReport: undefined,
+  // Test files with this in their name are held out: hidden from the implementation stage.
+  holdout: ['**/*.holdout.*'],
   // false = this package has no mutation gate. Otherwise { adapter, ... }.
   mutation: undefined,
 };
@@ -36,6 +38,8 @@ const DEFAULTS = {
   interview: 'always',
   // Optional cap on interview rounds (one round = one batch of questions). null = no cap.
   interviewMaxRounds: null,
+  // true = every item needs held-out tests for each criterion (see lib/holdout.mjs).
+  holdout: true,
   // Mutation runs allowed at the same time across the repository's worktrees. 0 = no limit.
   heavySlots: 2,
   // How long a mutation run waits for a free slot before it gives up.
@@ -93,6 +97,12 @@ export function packageOf(cfg, rel) {
     if (!best || p.root.length > best.pkg.root.length) best = { pkg: p, inside };
   }
   return best;
+}
+
+// A test file of the kind that is hidden from the implementation stage.
+export function isHoldout(cfg, rel) {
+  const owner = packageOf(cfg, rel);
+  return Boolean(cfg.holdout && owner && matchesAny(owner.inside, owner.pkg.holdout) && matchesAny(owner.inside, owner.pkg.tests));
 }
 
 // state | test | protected | docs | source | other

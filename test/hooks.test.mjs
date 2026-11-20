@@ -61,6 +61,22 @@ test('guard: the approval records and the state file are closed to the model, in
   assert.equal(decision(bash(dir, 'node /p/scripts/gp.mjs status --json')), 'allow');
 });
 
+test('guard: each agent writes only what its job needs, and nobody reaches the held-out tests', () => {
+  const { repo, dir } = item();
+  write(dir, '.gated/spec.md', SPEC);
+  pipeline.approve(dir, 'spec');
+  pipeline.advance(dir); // test stage: test files are writable
+  const as = (agent_type, tool_input, tool_name = 'Write') => decision(hook('pre-tool-use', { tool_name, cwd: dir, agent_type, tool_input }));
+  const file = (rel) => ({ file_path: path.join(dir, rel) });
+  assert.equal(as('gated-pipeline:test-writer', file('test/sub.test.mjs')), 'allow');
+  assert.equal(as('gated-pipeline:reviewer', file('test/sub.test.mjs')), 'deny');
+  assert.equal(as('gated-pipeline:reviewer', { command: 'echo x >> test/sub.test.mjs' }, 'Bash'), 'deny');
+  assert.equal(as('gated-pipeline:reviewer', { command: 'node --test test/ > /tmp/review-run.txt' }, 'Bash'), 'allow', 'a scratch file outside the repository is not a change');
+  assert.equal(as('gated-pipeline:implementer', file('test/sub.test.mjs')), 'deny');
+  assert.equal(decision(bash(repo, 'gunzip -c .git/gated-holdout/sub.bin')), 'deny');
+  assert.equal(decision(edit(repo, '.git/gated-holdout/sub.bin')), 'deny');
+});
+
 test('approval: a record written into the state file approves nothing; the CLI approves only from a terminal', () => {
   const { repo, dir } = item();
   write(dir, '.gated/spec.md', SPEC);

@@ -2,7 +2,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { classify, loadConfig, packageOf } from '../scripts/lib/config.mjs';
-import { bashWriteTargets, decideBash, decidePath, decideRecords, decideRecordsPath } from '../scripts/lib/guard.mjs';
+import { bashWriteTargets, decideAgent, decideBash, decidePath, decideRecords, decideRecordsPath } from '../scripts/lib/guard.mjs';
 import { parseReview } from '../scripts/lib/review.mjs';
 import { parseSpec, specProblems } from '../scripts/lib/spec.mjs';
 import { parseJestJson, parseJunit } from '../scripts/lib/test-report.mjs';
@@ -164,6 +164,22 @@ test('config: a per-test report needs a known format and a {report} in the test 
   assert.throws(() => load({ commands: { test: 'npx jest {files}' }, testReport: 'jest' }), /must contain \{report\}/);
   assert.throws(() => load({ commands: { test: 'x {files} {report}' }, testReport: 'tap' }), /"testReport" is one of jest, vitest, junit/);
   assert.equal(load({ commands: { test: 'npx jest {files} --json --outputFile={report}' }, testReport: 'jest' }).packages[0].testReport, 'jest');
+});
+
+test('agents: the reviewer writes nothing, the test-writer only tests, the implementer no tests, in any stage', () => {
+  assert.match(decideAgent('gated-pipeline:reviewer', 'test'), /reviewer reports and does not change files/);
+  assert.match(decideAgent('reviewer', 'source'), /does not change files/);
+  assert.match(decideAgent('gated-pipeline:test-writer', 'source'), /test files only/);
+  assert.equal(decideAgent('gated-pipeline:test-writer', 'test'), null);
+  assert.match(decideAgent('gated-pipeline:implementer', 'test'), /does not write tests/);
+  assert.equal(decideAgent('gated-pipeline:implementer', 'source'), null);
+  for (const other of [undefined, '', 'general-purpose', 'my-reviewer-bot']) assert.equal(decideAgent(other, 'source'), null, String(other));
+  // a hotfix lets the main session touch tests during implementation; the implementer agent still may not
+  assert.equal(decidePath(cfg, { stage: 'implementation', type: 'hotfix' }, 'server/src/a.spec.ts'), null);
+  assert.match(decidePath(cfg, { stage: 'implementation', type: 'hotfix' }, 'server/src/a.spec.ts', 'gated-pipeline:implementer'), /does not write tests/);
+  assert.match(decidePath(cfg, { stage: 'validation', type: 'feature' }, 'server/src/a.spec.ts', 'gated-pipeline:reviewer'), /does not change files/);
+  assert.match(decideRecords('zcat .git/gated-holdout/sub.bin'), /held-out tests stay hidden/);
+  assert.match(decideRecordsPath('/r/.git/gated-holdout/sub.bin'), /held-out tests stay hidden/);
 });
 
 test('review block: findings are read by kind; no block means no review', () => {

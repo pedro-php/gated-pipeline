@@ -54,9 +54,10 @@ The goal is a spec the user has read and approved, precise enough that someone w
 
 The goal is tests that fail now, for the right reason, and will pass only when the spec is met.
 
-- Delegate to the `gated-pipeline:test-writer` agent. Tell it the item, where the spec is, and which package the tests belong to. It writes the tests from the spec, not from an implementation, which is why this stage comes first.
+- Delegate to the `gated-pipeline:test-writer` agent. Tell it the item, where the spec is, which package the tests belong to, and whether the project uses held-out tests (`holdout` in `gated.config.json`, on by default). It writes the tests from the spec, not from an implementation, which is why this stage comes first.
 - Every AC must be cited by id in a test title (`AC-1: rejects an empty name`). `gp advance` checks it. When the package reports per-test results (`testReport` in `gated.config.json`), the title has to belong to a test that runs: a comment, a `skip` or a `todo` does not count, here or at GREEN.
-- Run `gp advance`. It runs each new test file and requires it to **fail** (RED). A test that already passes proves nothing about code that does not exist yet. On success the test files are frozen: their hashes are recorded.
+- **Held-out tests.** With `holdout` on, the test-writer also writes test files with `.holdout.` in the name. They test the same ACs with other inputs, and every AC needs one. Do not open them yourself and do not describe them to anyone: once RED is proven they are taken out of the worktree, and the implementer must not learn what they check.
+- Run `gp advance`. It runs each new test file and requires it to **fail** (RED). A test that already passes proves nothing about code that does not exist yet. On success the test files are frozen (their hashes are recorded) and the held-out files are hidden. Commit after that, so the commit holds the visible tests only.
 - Commit (`test(<item>): failing tests for AC-1..n`).
 
 ## 3. Implementation
@@ -64,7 +65,9 @@ The goal is tests that fail now, for the right reason, and will pass only when t
 The goal is the simplest change that makes the frozen tests pass.
 
 - Delegate to the `gated-pipeline:implementer` agent. It cannot edit tests or tool configuration (lint, TypeScript, test runner, mutation). If a test looks wrong, it reports that to you instead of working around it; you then decide with the user, and `gp back test` is how tests change.
-- Run `gp advance`. It checks that the tests are byte-identical to the frozen ones, runs them (GREEN), then runs the package's `lint`, `typecheck`, `build` and `testAll` commands where configured.
+- Run `gp advance`. It checks that the tests are byte-identical to the frozen ones, runs them (GREEN), brings the held-out tests back and runs those, then runs the package's `lint`, `typecheck`, `build` and `testAll` commands where configured.
+- **When the held-out tests fail**, the refusal names the ACs concerned and nothing else, and the tests are hidden again. That means the code fits the visible examples and not the rule. Send the implementer back with those AC ids and the instruction to implement what the spec says for every input. Do not try to find out what the hidden tests contain. If it fails again after a real attempt, the spec is probably unclear at that point: ask the user, and use `gp back test` or `gp back spec` if tests or spec have to change (going back shows the held-out tests again).
+- Once they pass, the held-out tests stay in the worktree as ordinary tests. Commit them with the implementation.
 - Commit (`feat(<item>): …` or `fix(<item>): …`).
 
 ## 4. Validation

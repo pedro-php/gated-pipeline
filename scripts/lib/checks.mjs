@@ -83,11 +83,13 @@ export function redCheck(root, cfg, state, h) {
 // -> for each criterion, how it stood before the implementation:
 //    'failed' (a test naming it failed), 'passed' (its tests pass already),
 //    'unknown' (cited in a file with no per-test results).
-export function acCoverage(root, acs, h, ran = {}) {
+// `files` are the test files that count (all of the item's, or one set of
+// them: the visible tests, the held-out tests); `what` names them in a refusal.
+export function acCoverage(root, acs, files, ran = {}, what = 'test') {
   const named = (c) => acs.some((ac) => cites(c.name, ac.id));
-  const withTitles = Object.keys(ran).filter((p) => ran[p].some(named));
+  const withTitles = files.filter((p) => ran[p]?.some(named));
   const titles = withTitles.flatMap((p) => ran[p]);
-  const text = liveTests(h).filter((p) => !withTitles.includes(p)).map((p) => fs.readFileSync(path.join(root, p), 'utf8')).join('\n');
+  const text = files.filter((p) => !withTitles.includes(p)).map((p) => fs.readFileSync(path.join(root, p), 'utf8')).join('\n');
   const missing = [];
   const idle = [];
   const out = [];
@@ -98,15 +100,16 @@ export function acCoverage(root, acs, h, ran = {}) {
     else if (cites(text, ac.id)) out.push({ id: ac.id, red: 'unknown' });
     else missing.push(ac.id);
   }
-  if (missing.length) fail(`no test cites ${missing.join(', ')}: name the criterion in the test title (e.g. "AC-1: …")${withTitles.length ? '; a comment does not count' : ''}`);
-  if (idle.length) fail(`${idle.join(', ')}: cited only by tests that do not run (skipped or todo), which prove nothing`);
+  if (missing.length) fail(`no ${what} cites ${missing.join(', ')}: name the criterion in the test title (e.g. "AC-1: …")${withTitles.length ? '; a comment does not count' : ''}`);
+  if (idle.length) fail(`${idle.join(', ')}: cited only by ${what}s that do not run (skipped or todo), which prove nothing`);
   return { acs: out };
 }
 
-// Tests are frozen at RED: the implementation may not touch them.
-export function tamperCheck(root, state, h) {
+// Tests are frozen at RED: the implementation may not touch them. `sealed`
+// are the hashes of held-out tests as they lie in their store, out of the worktree.
+export function tamperCheck(root, state, h, sealed = {}) {
   const frozen = state.frozenTests ?? {};
-  const now = freeze(root, h);
+  const now = { ...sealed, ...freeze(root, h) };
   const changed = [...new Set([...Object.keys(frozen), ...Object.keys(now)])].filter((p) => frozen[p] !== now[p]);
   if (changed.length) fail(`test files changed after they were frozen at RED:\n  ${changed.join('\n  ')}\nRestore them; tests change only in the test or validation stage.`);
 }

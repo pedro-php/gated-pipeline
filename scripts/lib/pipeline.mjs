@@ -3,12 +3,14 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { approvalOf, describeApproval, recordApproval } from './approvals.mjs';
-import { loadConfig, STATE_DIR } from './config.mjs';
+import { isHoldout, loadConfig, STATE_DIR } from './config.mjs';
 import * as checks from './checks.mjs';
 import { currentBranch, git, hashes, isClean, mergeBase, resolveBase } from './git.mjs';
+import * as holdout from './holdout.mjs';
 import { mutate, openSurvivors } from './mutation.mjs';
 import { readSpec } from './spec.mjs';
 import { loadState, logEvent, newState, nextStage, saveState, specFile, STAGES, updateState } from './state.mjs';
+import { cites } from './test-report.mjs';
 import { fail, GateError, run } from './util.mjs';
 
 export const mainRoot = (root) => git(root, ['worktree', 'list', '--porcelain']).split('\n')[0].replace(/^worktree /, '');
@@ -57,8 +59,8 @@ export function init(root, { type, item, base }) {
 
 const HINTS = {
   spec: (s) => `write ${STATE_DIR}/spec.md, check it with "spec", then ask the user with AskUserQuestion: "Approve spec for ${s.item}?" (options "Approve" / "Request changes"), then run advance`,
-  test: () => 'have the test-writer agent write failing tests that cite every AC id, then run advance (it proves RED)',
-  implementation: (s) => (s.type === 'hotfix' ? 'fix the problem, then run advance' : 'have the implementer agent make the frozen tests pass, then run advance (it proves GREEN and runs lint, typecheck and build)'),
+  test: () => 'have the test-writer agent write failing tests that cite every AC id (visible tests, and held-out tests in *.holdout.* files when the project uses them), then run advance (it proves RED)',
+  implementation: (s) => (s.type === 'hotfix' ? 'fix the problem, then run advance' : `have the implementer agent make the frozen tests pass, then run advance (it proves GREEN${s.sealed ? ', runs the held-out tests the implementer has not seen,' : ''} and runs lint, typecheck and build)`),
   validation: () => 'run mutate, kill or justify survivors, run the reviewer agent, prove each blocking finding with a test, then run advance',
   docs: (s) => `write the item record (docs records folder, named <date>-${s.item}.md), update the project docs and the changelog, then run advance (it adds the evidence section to the record)`,
   merge: (s) => `ask the user with AskUserQuestion: "Approve merge of ${s.item}?" (options "Approve" / "Request changes"), then run merge`,
@@ -73,8 +75,42 @@ function move(root, state, to) {
   return state;
 }
 
+// Brings the held-out tests back and runs them against an implementation
+// written without them. Passing: they stay, as ordinary tests of the item.
+// Failing: they go back into hiding, and the refusal names the criteria only.
+function proveHoldout(root, cfg, state) {
+  const acs = readSpec(root).acs;
+  const files = holdout.restore(root, state.item);
+  const attempt = (state.evidence.holdout?.attempts ?? 0) + 1;
+  let failed;
+  try {
+    const runs = files.map((rel) => ({ rel, ...checks.runTestFiles(root, cfg, [rel])[0] }));
+    failed = runs.filter((r) => r.code !== 0);
+    if (failed.length) {
+      const failing = failed.flatMap((r) => (r.cases ? r.cases.filter((c) => c.status === 'failed').map((c) => c.name) : [fs.readFileSync(path.join(root, r.rel), 'utf8')]));
+      state.evidence.holdout = { files: files.length, attempts: attempt, passed: false, acs: acs.filter((ac) => failing.some((text) => cites(text, ac.id))).map((ac) => ac.id) };
+    }
+  } finally {
+    if (failed?.length !== 0) holdout.hide(root, state.item);
+  }
+  if (failed.length) {
+    saveState(root, state);
+    const named = state.evidence.holdout.acs;
+    fail(`the visible tests pass, but ${failed.length} of ${files.length} held-out test file(s) fail${named.length ? `, for ${named.join(', ')}` : ''} (attempt ${attempt}). They stay hidden. The code meets the examples it was shown and not the rule behind them: read ${named.length ? 'those criteria' : 'the criteria'} in the spec again and implement what they say for every input. If the spec itself is unclear there, tell the user.`);
+  }
+  state.evidence.holdout = { files: files.length, attempts: attempt, passed: true };
+  state.sealed = null;
+  holdout.dropStore(root, state.item);
+  // Saved now: the held-out tests have done their work, whatever the later checks say.
+  saveState(root, state);
+}
+
 function proveGreen(root, cfg, state, h, staticNames) {
   const green = checks.greenCheck(root, cfg, h, readSpec(root).acs);
+  if (state.sealed) {
+    proveHoldout(root, cfg, state);
+    h = hashes(root, cfg, state.base);
+  }
   const stat = checks.staticChecks(root, cfg, h, staticNames);
   state.evidence.green = { codeHash: h.codeHash, sourceHash: h.sourceHash, base: mergeBase(root, state.base), runs: green.runs, tests: green.tests, acs: green.acs, static: stat.results, at: new Date().toISOString() };
 }
@@ -99,9 +135,22 @@ export function advance(root) {
       if (!approvalOf(root, state, 'spec', spec.hash)) fail('the spec changed after the user approved it: restore it, or go "back spec" and ask again');
       if (h.sourceHash !== state.snapshot?.sourceHash) fail('non-test files changed during the test stage; revert them (tests come before the implementation)');
       const red = checks.redCheck(root, cfg, state, h);
-      const coverage = checks.acCoverage(root, spec.acs, h, red.cases);
+      const live = checks.liveTests(h);
+      const hidden = live.filter((p) => isHoldout(cfg, p));
+      const coverage = checks.acCoverage(root, spec.acs, live.filter((p) => !hidden.includes(p)), red.cases, cfg.holdout ? 'visible test' : 'test');
+      if (cfg.holdout) {
+        try {
+          checks.acCoverage(root, spec.acs, hidden, red.cases, 'held-out test');
+        } catch (e) {
+          e.message += '\nHeld-out tests go in test files with ".holdout." in the name (sub.holdout.test.ts). They test the same criteria with other inputs, and the implementation stage never sees them.';
+          throw e;
+        }
+      }
       state.evidence.red = { files: red.files, acs: coverage.acs, round: state.round, at: new Date().toISOString() };
       state.frozenTests = checks.freeze(root, h);
+      // Only files this item adds can be hidden: one that is already in the base branch is in git for all to read.
+      const sealable = hidden.filter((p) => git(root, ['cat-file', '-e', `${mergeBase(root, state.base)}:${p}`], { allowFail: true }) === null);
+      if (sealable.length) state.sealed = holdout.seal(root, state.item, sealable);
       break;
     }
     case 'implementation': {
@@ -115,7 +164,7 @@ export function advance(root) {
         writeEvidence(root, cfg, state);
         break;
       }
-      checks.tamperCheck(root, state, h);
+      checks.tamperCheck(root, state, h, state.sealed ? holdout.sealedHashes(root, state.item) : {});
       proveGreen(root, cfg, state, h);
       break;
     }
@@ -193,6 +242,12 @@ export function back(root, target) {
   if (to < 0 || !['spec', 'test', 'implementation'].includes(target)) fail(`"back" goes to ${stages.filter((s) => ['spec', 'test', 'implementation'].includes(s)).join(', ')}`);
   if (to >= from || state.stage === 'done') fail(`the item is at "${state.stage}": "${target}" is not behind it`);
   const cfg = configFor(root);
+  // Going back shows the held-out tests again: whoever changes the tests needs all of them.
+  if (state.sealed) {
+    holdout.restore(root, state.item);
+    holdout.dropStore(root, state.item);
+    state.sealed = null;
+  }
   const h = hashes(root, cfg, state.base);
   // Approvals need no voiding: each is tied to a content hash, so whatever changes from here is not approved.
   state.snapshot = { sourceHash: h.sourceHash };
@@ -301,6 +356,7 @@ export function evidenceSection(state, { specApproval = null } = {}) {
   if (e.red) lines.push(`- RED: ${e.red.files.length} test file(s) failed before the implementation (${e.red.files.map((f) => f.path).join(', ')})`);
   if (e.green) {
     lines.push(`- GREEN: ${e.green.runs.length ? e.green.runs.map((r) => `${r.package} passed`).join(', ') : 'no test run'}${e.green.tests ? ` (${e.green.tests.passed} test(s) ran and passed${e.green.tests.skipped ? `, ${e.green.tests.skipped} in the same files did not run` : ''})` : ''}`);
+    if (e.holdout?.passed) lines.push(`- Held-out tests: ${e.holdout.files} test file(s) the implementation stage never saw; they passed on attempt ${e.holdout.attempts}`);
     const before = { failed: 'a test naming it failed', passed: 'its tests passed already, so they pin behaviour that held', unknown: 'its test file failed as a whole' };
     if (e.green.acs && e.red?.acs?.[0]?.red) for (const ac of e.red.acs) lines.push(`- ${ac.id}: before the implementation ${before[ac.red]}; after it${e.green.acs.includes(ac.id) ? ' a test naming it runs and passes' : ' not checked per test'}`);
     for (const s of e.green.static) lines.push(`- ${s.check} (${s.package}): ${s.status}`);

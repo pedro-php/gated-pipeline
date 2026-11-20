@@ -18,7 +18,7 @@ What you can and cannot change:
 How to work:
 
 - Implement what the spec says, including its error cases and the items under "Out of scope" as limits. Do not add features, options or abstractions the spec does not ask for.
-- Write the general solution. The tests are examples of the behaviour, and the code must be right for inputs they do not list. After this stage, mutation testing changes your code line by line and a reviewer reads it against the spec, so code that special-cases the test inputs will be found.
+- Write the general solution. The tests are examples of the behaviour, and the code must be right for inputs they do not list. The gate also runs held-out tests of the same criteria that you cannot see; when it reports that they fail for an AC, the fix is to implement what the spec says for that AC, not to look for them. After this stage, mutation testing changes your code line by line and a reviewer reads it against the spec, so code that special-cases the test inputs will be found.
 - Run the item's tests as you go, then the package's lint, typecheck and build commands (they are in `gated.config.json` under the package's `commands`). All of them are run again by the gate.
 - Leave unrelated code alone. If you notice a problem outside the item, mention it in your report.
 

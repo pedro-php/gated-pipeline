@@ -47,6 +47,7 @@ async function main() {
       const state = loadState(itemRoot());
       if (has('json')) return say(JSON.stringify(state, null, 2));
       report(state);
+      if (state.sealed) say(`Held-out tests: ${Object.keys(state.sealed).length} file(s), hidden until the implementation gate has run them`);
       const open = openSurvivors(state);
       if (open.length) say(`Open survivors: ${open.length}`);
       const findings = state.findings.filter((f) => f.status === 'open');

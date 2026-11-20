@@ -16,7 +16,7 @@ Claude writes the spec with you, writes failing tests from it, implements until 
 |---|---|---|
 | **Spec** | Claude interviews you and writes numbered acceptance criteria, each with a concrete example | you approved that exact text |
 | **Test** | `test-writer` agent, from the spec alone | every criterion is cited by a test that runs, and every new test file **fails** (RED) |
-| **Implementation** | `implementer` agent | the tests are byte-identical to the ones frozen at RED and now **pass** (GREEN), each criterion by a test that ran; lint, typecheck and build pass; no tool configuration was changed |
+| **Implementation** | `implementer` agent | the tests are byte-identical to the ones frozen at RED and now **pass** (GREEN), each criterion by a test that ran; the held-out tests, which the implementer never saw, pass too; lint, typecheck and build pass; no tool configuration was changed |
 | **Validation** | mutation tool, `reviewer` agent, `test-writer` | no mutant on the changed lines survives without a killing test or a written justification; every blocking review finding was proven or refuted by a test |
 | **Docs** | Claude | the item record and the changelog entry exist; the pipeline adds its evidence to the record |
 | **Merge** | you | you approved that exact tree |
@@ -63,6 +63,7 @@ Add `gated.config.json` at the repository root and commit it. [`gated.config.exa
 | Setting | Meaning | Default |
 |---|---|---|
 | `baseBranch` | branch items start from and merge into | `development` |
+| `holdout` | `true`: every item needs held-out tests for each criterion (below). `false`: none | `true` |
 | `interview` | `always`: interview before every spec. `auto`: only when the request is ambiguous | `always` |
 | `interviewMaxRounds` | optional cap on interview rounds (one round = one batch of questions); open points left become written assumptions in the spec | no cap |
 | `heavySlots` | mutation runs allowed at once across the repository's worktrees; others wait their turn. `0` = no limit | 2 |
@@ -83,6 +84,7 @@ Per package:
 | `source`, `tests` | globs (`**`, `*`, `?`) for source and test files. Test helpers and fixtures belong under `tests` |
 | `protected` | tool configuration no item may change (defaults cover Jest, Vitest, Stryker, TypeScript and ESLint config files) |
 | `commands.test` | runs the given test files; `{files}` is replaced by their paths. **Required** |
+| `holdout` | globs of the test files that are held out (default `**/*.holdout.*`). They must also match `tests` |
 | `testReport` | `jest`, `vitest` or `junit`: the per-test report `commands.test` writes to `{report}` (below). Optional, recommended |
 | `commands.testAll`, `lint`, `typecheck`, `build` | optional whole-package checks |
 | `mutation` | the mutation gate (below), or `false` to state the package has none. A touched package must say one or the other |
@@ -107,6 +109,17 @@ A test file that cannot load yet, because it imports a module the implementation
 
 Keep a human-readable reporter on standard output as well: the tail of it is what Claude sees when a gate fails.
 
+### Held-out tests
+
+An implementer that can read every test can satisfy the tests instead of the spec, by special-casing the examples. So the test-writer writes two sets from the same spec: the visible tests, and held-out tests in files with `.holdout.` in the name (`export.holdout.test.ts`) that check the same criteria with other inputs.
+
+- Both sets must fail at RED and both are frozen. Then the held-out files are taken out of the worktree and kept, packed, in the repository's git directory. The implementation stage works without them.
+- `gp advance` at the end of implementation brings them back and runs them. If they pass, they stay as ordinary tests of the item: mutation testing and the reviewer see them, and they are merged with the rest.
+- If they fail, they are hidden again and the refusal names only the criteria concerned, never the test. Every detail given about a hidden test is one the code can then be fitted to.
+- `gp back test` shows them again, for whoever has to change the tests.
+
+The guard denies any command or edit that names the store (`.git/gated-holdout/`). To close it to the file-reading tools as well, add a permission rule to your settings: `"permissions": { "deny": ["Read(//absolute/path/to/your/repo/.git/gated-holdout/**)"] }`.
+
 ### Mutation testing
 
 The gate mutates only the lines the item changed. A surviving mutant must be killed by a new test, or justified in writing; you see every justification in the item record before approving. There is no score threshold. A run that hits its time budget is incomplete and blocks, it never passes.
@@ -129,7 +142,7 @@ With `"runner": "jest"` the pipeline adds a small Stryker plugin (`gated-jest`) 
 
 Hooks, all plain Node scripts:
 
-- **PreToolUse** on file edits and shell commands denies a write that does not belong to the current stage, and says why. Shell commands are checked for the common write forms only; the hash checks in `gp advance` are what catches the rest.
+- **PreToolUse** on file edits and shell commands denies a write that does not belong to the current stage, and says why. It also holds each agent to its job in any stage: the reviewer changes no file of the repository, the test-writer only test files, the implementer no test. Shell commands are checked for the common write forms only; the hash checks in `gp advance` are what catches the rest.
 - **PreToolUse** on `AskUserQuestion` fills the approval dialog. When Claude asks `Approve spec for <item>?` or `Approve merge of <item>?`, the hook puts the text itself into the dialog's preview, read from disk: the spec file, or the item's evidence and the list of files it changes. You approve what is there, not Claude's account of it. The question carries the first digits of that text's hash.
 - **PostToolUse** on `AskUserQuestion` records your approval when you answer `Approve`, tied to the hash the dialog showed.
 - **Stop** reminds Claude once when it stops in the middle of a working stage. The reviewer's findings are recorded when it hands its report back (**PreToolUse** on `SubagentHandback`, which also sends back a report that lacks the closing block) or, in sessions without that tool, when it stops (**SubagentStop**).

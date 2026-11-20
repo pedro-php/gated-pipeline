@@ -174,6 +174,70 @@ test('per-test results: a failing run names the tests that failed, and a run wit
   blocked(() => pipeline.advance(d2), /app: the run passed without running a single test/);
 });
 
+test('held-out tests: hidden once RED is proven, run by the implementation gate, and only the criterion is named when they fail', () => {
+  const config = { ...structuredClone(REPORTING_CONFIG), holdout: true };
+  const repo = makeRepo(config);
+  const dir = pipeline.start(repo, { type: 'feature', item: 'sub' });
+  write(dir, '.gated/spec.md', SPEC);
+  pipeline.approve(dir, 'spec');
+  pipeline.advance(dir);
+  const HIDDEN = `${T}test('AC-1: sub(10, 4) is 6', () => assert.equal(math.sub(10, 4), 6));\n`;
+  const hidden = path.join(dir, 'test/sub.holdout.test.mjs');
+  const store = path.join(repo, '.git/gated-holdout/sub.bin');
+
+  write(dir, 'test/sub.test.mjs', `${T}${AC1}`);
+  blocked(() => pipeline.advance(dir), /no held-out test cites AC-1[\s\S]*".holdout." in the name/);
+  write(dir, 'test/sub.holdout.test.mjs', HIDDEN);
+  let state = pipeline.advance(dir);
+  assert.equal(state.stage, 'implementation');
+  assert.deepEqual(Object.keys(state.sealed), ['test/sub.holdout.test.mjs']);
+  assert.equal(fs.existsSync(hidden), false, 'out of the worktree');
+  assert.equal(fs.readFileSync(store).includes('sub(10, 4)'), false, 'and not lying around as plain text');
+  assert.match(gp(dir, 'status').out, /Held-out tests: 1 file\(s\), hidden until the implementation gate/);
+
+  // code fitted to the one example it was shown
+  write(dir, 'src/math.mjs', 'export const add = (a, b) => a + b;\nexport const sub = (a, b) => (a === 5 && b === 3 ? 2 : 0);\n');
+  const refusal = gp(dir, 'advance').out;
+  assert.match(refusal, /BLOCKED: the visible tests pass, but 1 of 1 held-out test file\(s\) fail, for AC-1 \(attempt 1\)\. They stay hidden/);
+  assert.doesNotMatch(refusal, /10|6 !==|sub\(10/, 'nothing of the hidden test leaks into the refusal');
+  assert.equal(fs.existsSync(hidden), false);
+  assert.match(gp(dir, 'advance').out, /attempt 2/);
+
+  // a file put where the hidden one belongs does not replace it
+  write(dir, 'test/sub.holdout.test.mjs', "import test from 'node:test';\ntest('AC-1: fine', () => {});\n");
+  blocked(() => pipeline.advance(dir), /test files changed after they were frozen[\s\S]*sub\.holdout\.test\.mjs/);
+  fs.rmSync(hidden);
+
+  write(dir, 'src/math.mjs', IMPL);
+  state = pipeline.advance(dir);
+  assert.equal(state.stage, 'validation');
+  assert.equal(state.sealed, null);
+  assert.equal(fs.readFileSync(hidden, 'utf8'), HIDDEN, 'once passed, they are ordinary tests of the item');
+  assert.equal(fs.existsSync(store), false);
+  assert.deepEqual(state.evidence.holdout, { files: 1, attempts: 3, passed: true });
+  assert.deepEqual(state.evidence.green.tests, { passed: 1, skipped: 0 }, 'the visible run; the held-out run is counted apart');
+  assert.match(pipeline.summary(dir, pipeline.configFor(dir), state), /Held-out tests: 1 test file\(s\) the implementation stage never saw; they passed on attempt 3/);
+});
+
+test('held-out tests: going back shows them again, and they are hidden again at the next RED', () => {
+  const config = { ...structuredClone(DEFAULT_CONFIG), holdout: true };
+  const repo = makeRepo(config);
+  const dir = pipeline.start(repo, { type: 'feature', item: 'sub' });
+  write(dir, '.gated/spec.md', SPEC);
+  pipeline.approve(dir, 'spec');
+  pipeline.advance(dir);
+  write(dir, 'test/sub.test.mjs', RED_TEST);
+  write(dir, 'test/sub.holdout.test.mjs', RED_TEST.replace('sub(5, 3), 2', 'sub(9, 1), 8'));
+  pipeline.advance(dir);
+  const hidden = path.join(dir, 'test/sub.holdout.test.mjs');
+  assert.equal(fs.existsSync(hidden), false);
+  assert.equal(pipeline.back(dir, 'test').sealed, null);
+  assert.ok(fs.existsSync(hidden));
+  write(dir, 'test/sub.holdout.test.mjs', RED_TEST.replace('sub(5, 3), 2', 'sub(7, 7), 0'));
+  assert.deepEqual(Object.keys(pipeline.advance(dir).sealed), ['test/sub.holdout.test.mjs']);
+  assert.equal(fs.existsSync(hidden), false);
+});
+
 test('file names with accents are tracked like any other', () => {
   const { dir } = itemAt('test');
   write(dir, 'test/subtração.test.mjs', RED_TEST);

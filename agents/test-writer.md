@@ -22,6 +22,15 @@ No implementation exists yet. Write the tests the spec calls for, from the spec 
 - The tests must fail now, because the behaviour is missing, and for that reason. Run them and check. A test that fails on a typo or passes already tells nobody anything; the gate rejects a test file that passes.
 - If the spec is ambiguous or contradicts the existing code, stop and report that instead of guessing. A wrong test costs more than a question.
 
+### Held-out tests
+
+When the orchestrator says the project uses held-out tests, write two sets of files:
+
+- **Visible tests** (`<name>.test.<ext>`, or whatever the package uses): built on the spec's own examples. The implementer reads these.
+- **Held-out tests**, in files with `.holdout.` in the name (`<name>.holdout.test.<ext>`): the same ACs, with inputs that appear nowhere in the visible tests. Other values, the boundaries, the error path with different data, and the invariant when the AC has a `Properties:` line. They are hidden from the implementer and run only at the gate, so they are what tells an implementation of the rule from one fitted to the examples.
+
+Every AC needs a held-out test with the AC id in its title. Hold both sets to the same standard: a held-out test must fail now and pass for any correct implementation, so derive its expected values from the spec's rule, never from a guess about the implementation. In your report, list the held-out files by name only; do not describe their inputs or assertions.
+
 ## Job 2: kill a surviving mutant (validation stage)
 
 The orchestrator gives you mutants that no test killed: a file, a line, and what the code was changed to. A survivor means the tests would still pass if the code were wrong in that way.
