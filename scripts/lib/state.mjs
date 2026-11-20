@@ -118,6 +118,8 @@ export function newState({ type, item, base }) {
     rev: 0,
     startedAt: new Date().toISOString(),
     frozenTests: null,
+    // Held-out tests now out of the worktree: { path: sha256 }, or null.
+    sealed: null,
     evidence: {},
     justified: {},
     findings: [],

@@ -44,6 +44,7 @@ write(
   JSON.stringify({
     setup: ['ln -s "$GATED_MAIN_ROOT/node_modules" node_modules'],
     docs: { changelog: false },
+    holdout: false,
     packages: [{ name: 'app', source: ['src/**'], tests: ['test/**'], commands: { test: 'npx jest {files} --json --outputFile={report}' }, testReport: 'jest', mutation: { adapter: 'stryker', runner: 'jest', concurrency: 2 } }],
   }),
 );

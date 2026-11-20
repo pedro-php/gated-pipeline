@@ -5,13 +5,16 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { APPROVALS_DIR } from './approvals.mjs';
 import { classify, STATE_DIR } from './config.mjs';
+import { HOLDOUT_DIR } from './holdout.mjs';
 
 const SPEC = `${STATE_DIR}/spec.md`;
 
 // -> null when the write is allowed, otherwise the reason it is not.
-export function decidePath(cfg, state, rel) {
+export function decidePath(cfg, state, rel, agentType) {
   const kind = classify(cfg, rel);
   const { stage } = state;
+  const role = decideAgent(agentType, kind);
+  if (role) return role;
   if (kind === 'state') {
     if (rel === SPEC && stage === 'spec') return null;
     return rel === SPEC ? 'the spec is frozen once approved (go "back spec" to change it)' : `${STATE_DIR}/ is written by the pipeline CLI only`;
@@ -34,10 +37,10 @@ export function decidePath(cfg, state, rel) {
   }
 }
 
-export function decideEdit(root, cfg, state, absPath) {
+export function decideEdit(root, cfg, state, absPath, agentType) {
   const rel = path.relative(root, absPath).split(path.sep).join('/');
   if (rel.startsWith('..') || path.isAbsolute(rel)) return null;
-  return decidePath(cfg, state, rel);
+  return decidePath(cfg, state, rel, agentType);
 }
 
 // Splits a command line into words, remembering which were quoted (a quoted
@@ -113,17 +116,34 @@ export function bashWriteTargets(command, cwd) {
 const CLI = /gp\.mjs|pipeline\.mjs|approvals\.mjs|(?:^|[\s;&|('"`/])gp(?=$|[\s'"`])/;
 export function decideRecords(command) {
   if (command.includes(APPROVALS_DIR)) return 'approvals are recorded only when the user answers the approval question';
+  if (command.includes(HOLDOUT_DIR)) return 'the held-out tests stay hidden until the implementation gate has run them';
   if (/\bapprove\b|recordApproval/.test(command) && CLI.test(command)) return 'only the user approves: ask with AskUserQuestion (the answer is recorded by a hook)';
   if (new RegExp(`${STATE_DIR.replace('.', '\\.')}/state\\.(json|lock)`).test(command)) return `${STATE_DIR}/state.json is written by the pipeline CLI only (read it with "status --json")`;
   return null;
 }
 
 // A file tool aimed at the approval records, in any checkout.
-export const decideRecordsPath = (absPath) => (absPath.split(/[\\/]/).includes(APPROVALS_DIR) ? 'approvals are recorded only when the user answers the approval question' : null);
+export function decideRecordsPath(absPath) {
+  const parts = absPath.split(/[\\/]/);
+  if (parts.includes(APPROVALS_DIR)) return 'approvals are recorded only when the user answers the approval question';
+  if (parts.includes(HOLDOUT_DIR)) return 'the held-out tests stay hidden until the implementation gate has run them';
+  return null;
+}
 
-export function decideBash(root, cfg, state, command, cwd) {
+// What each of the pipeline's agents may write, whatever the stage: the
+// reviewer nothing, the test-writer tests only, the implementer no tests.
+// -> null when this agent may write a file of this kind, otherwise the reason.
+export function decideAgent(agentType, kind) {
+  const role = /(?:^|:)(reviewer|test-writer|implementer)$/.exec(agentType ?? '')?.[1];
+  if (role === 'reviewer' && kind !== 'state') return 'the reviewer reports and does not change files (use a scratch file outside the repository for an experiment)';
+  if (role === 'test-writer' && kind !== 'test') return 'the test-writer writes test files only';
+  if (role === 'implementer' && kind === 'test') return 'the implementer does not write tests: report a test that looks wrong instead';
+  return null;
+}
+
+export function decideBash(root, cfg, state, command, cwd, agentType) {
   for (const target of bashWriteTargets(command, cwd)) {
-    const reason = decideEdit(root, cfg, state, path.resolve(cwd, target));
+    const reason = decideEdit(root, cfg, state, path.resolve(cwd, target), agentType);
     if (reason) return `${target}: ${reason}`;
   }
   return null;

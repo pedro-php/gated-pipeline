@@ -16,14 +16,14 @@ try {
   if (tool === 'Bash') {
     const root = findRoot(cwd);
     reason = decideRecords(input.tool_input?.command ?? '');
-    if (!reason && root) reason = decideBash(root, configFor(root), loadState(root), input.tool_input?.command ?? '', cwd);
+    if (!reason && root) reason = decideBash(root, configFor(root), loadState(root), input.tool_input?.command ?? '', cwd, input.agent_type);
   } else {
     const file = input.tool_input?.file_path ?? input.tool_input?.notebook_path;
     if (file) {
       const abs = path.resolve(cwd, file);
       const root = findRoot(path.dirname(abs));
       reason = decideRecordsPath(abs);
-      if (!reason && root) reason = decideEdit(root, configFor(root), loadState(root), abs);
+      if (!reason && root) reason = decideEdit(root, configFor(root), loadState(root), abs, input.agent_type);
     }
   }
 } catch (e) {
