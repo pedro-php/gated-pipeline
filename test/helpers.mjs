@@ -8,7 +8,10 @@ import { fileURLToPath } from 'node:url';
 export const PLUGIN = fileURLToPath(new URL('..', import.meta.url));
 export const FAKE_MUTATOR = fileURLToPath(new URL('./fixtures/fake-mutator.mjs', import.meta.url));
 
-const GIT_ENV = { ...process.env, GIT_AUTHOR_NAME: 't', GIT_AUTHOR_EMAIL: 't@t', GIT_COMMITTER_NAME: 't', GIT_COMMITTER_EMAIL: 't@t' };
+// The pipeline's own git calls (a merge commit) run in this process: give it an
+// identity too, so the tests do not depend on the machine having one.
+Object.assign(process.env, { GIT_AUTHOR_NAME: 't', GIT_AUTHOR_EMAIL: 't@t', GIT_COMMITTER_NAME: 't', GIT_COMMITTER_EMAIL: 't@t' });
+const GIT_ENV = { ...process.env };
 export const sh = (cwd, file, args) => execFileSync(file, args, { cwd, encoding: 'utf8', env: GIT_ENV, stdio: ['ignore', 'pipe', 'pipe'] });
 export const write = (root, rel, text) => {
   fs.mkdirSync(path.dirname(path.join(root, rel)), { recursive: true });

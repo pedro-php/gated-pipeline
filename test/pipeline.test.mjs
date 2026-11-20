@@ -562,6 +562,25 @@ test('merge: a base branch that changed the same lines is a conflict, and nothin
   assert.equal(sh(repo, 'git', ['rev-parse', 'HEAD']).trim(), baseHead);
 });
 
+test('merge: a merge git refuses for another reason is not reported as a conflict', async () => {
+  const { repo, dir } = await itemAtMerge();
+  pipeline.approve(dir, 'merge');
+  commit(dir, 'feat(sub): subtract');
+  const saved = { ...process.env };
+  for (const k of ['GIT_AUTHOR_NAME', 'GIT_AUTHOR_EMAIL', 'GIT_COMMITTER_NAME', 'GIT_COMMITTER_EMAIL']) delete process.env[k];
+  // no identity anywhere: git cannot write the merge commit
+  Object.assign(process.env, { HOME: path.join(repo, 'no-home'), XDG_CONFIG_HOME: path.join(repo, 'no-home'), GIT_CONFIG_NOSYSTEM: '1', GIT_CONFIG_GLOBAL: '/dev/null', EMAIL: '' });
+  sh(repo, 'git', ['config', 'user.useConfigOnly', 'true']);
+  try {
+    blocked(() => pipeline.merge(dir), /git could not merge "gated\/sub" and "development", and not because of a conflict\. Nothing was merged\. git said:\n[\s\S]*(identity|user\.email|user\.name)/i);
+  } finally {
+    for (const k of Object.keys(process.env)) if (!(k in saved)) delete process.env[k];
+    Object.assign(process.env, saved);
+  }
+  assert.equal(sh(repo, 'git', ['status', '--porcelain']), '');
+  assert.equal(stage(dir), 'merge');
+});
+
 test('back: returns to an earlier stage; the approval stays with the tree it was given for, and changed tests must be RED again', async () => {
   const { repo, dir } = await itemAtMerge();
   pipeline.approve(dir, 'merge');

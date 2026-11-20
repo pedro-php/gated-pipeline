@@ -15,6 +15,21 @@ export function git(root, args, { allowFail = false } = {}) {
   }
 }
 
+// Merges `ref` into the checkout at `root`. A merge can fail for reasons other
+// than a conflict (no committer identity, a hook), and telling the user to
+// resolve a conflict that does not exist sends them the wrong way.
+// -> null when merged, otherwise { conflict: boolean, error: string }; the checkout is left as it was.
+export function tryMerge(root, ref, message) {
+  try {
+    execFileSync('git', ['merge', '--no-ff', '-m', message, ref], { cwd: root, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
+    return null;
+  } catch (e) {
+    const conflict = (git(root, ['diff', '--name-only', '--diff-filter=U'], { allowFail: true }) ?? '') !== '';
+    git(root, ['merge', '--abort'], { allowFail: true });
+    return { conflict, error: `${e.stdout ?? ''}${e.stderr ?? ''}`.trim() || e.message };
+  }
+}
+
 export const currentBranch = (root) => git(root, ['rev-parse', '--abbrev-ref', 'HEAD']);
 
 export function resolveBase(root, base) {
