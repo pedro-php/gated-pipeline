@@ -122,6 +122,9 @@ export function newState({ type, item, base }) {
     sealed: null,
     evidence: {},
     justified: {},
+    // Rulings of the reviewer on justifications: accepted ones, and the reasons of rejected ones.
+    judged: {},
+    rejected: {},
     findings: [],
     log: [],
   };

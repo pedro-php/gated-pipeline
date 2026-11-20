@@ -20,7 +20,8 @@ export const commit = (root, message) => {
 };
 
 export const DEFAULT_CONFIG = {
-  holdout: false, // most tests are about one gate at a time; the held-out tests have their own
+  holdout: false, // most tests are about one gate at a time; the held-out tests and the spec check have their own
+  specCheck: false,
   packages: [
     {
       name: 'app',

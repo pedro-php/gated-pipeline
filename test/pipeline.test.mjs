@@ -299,9 +299,36 @@ test('validation gate: a survivor passes with a real justification, which the su
   blocked(() => pipeline.justify(dir, open[0].id, 'equivalent'), /full sentence/);
   blocked(() => pipeline.justify(dir, 'nope', 'this mutant only changes a log message'), /not a surviving mutant/);
   pipeline.justify(dir, open[0].id, 'this mutant only changes a log message');
-  review(dir, 'GATED-REVIEW');
+  review(dir, `GATED-REVIEW\nEQUIVALENT: ${open[0].id}`);
   assert.equal(pipeline.advance(dir).stage, 'docs');
-  assert.match(pipeline.summary(dir, pipeline.configFor(dir), loadState(dir)), /accepted with a justification[\s\S]*only changes a log message/);
+  assert.match(pipeline.summary(dir, pipeline.configFor(dir), loadState(dir)), /accepted with a justification[\s\S]*only changes a log message \(the reviewer agreed that no test can tell them apart\)/);
+});
+
+test('validation gate: a justification holds only when the reviewer agrees; a rejected one makes the mutant open again', async () => {
+  const { dir } = itemAt('validation');
+  const { open } = await pipeline.runMutation(dir);
+  const id = open[0].id;
+  pipeline.justify(dir, id, 'this mutant only changes a log message');
+  review(dir, 'GATED-REVIEW');
+  blocked(() => pipeline.advance(dir), /1 justification\(s\) the reviewer has not ruled on[\s\S]*only changes a log message/);
+  assert.match(gp(dir, 'status').out, /Justification awaiting the reviewer's ruling: src\/math\.mjs:2/);
+
+  // handed back without a ruling: sent back; with one: recorded
+  const handback = (message) => hook('handback', { hook_event_name: 'PreToolUse', tool_name: 'SubagentHandback', cwd: dir, agent_type: 'gated-pipeline:reviewer', agent_id: 'r1', tool_input: { message } });
+  assert.match(handback('GATED-REVIEW').json.hookSpecificOutput.permissionDecisionReason, /rule on every justified survivor[\s\S]*Missing: src\/math\.mjs:2/);
+  assert.equal(handback(`GATED-REVIEW\n- **KILLABLE**: ${id} sub(0, 1) gives -1 in the original and 1 in the mutant`).json, null);
+  let state = loadState(dir);
+  assert.deepEqual(state.justified, {}, 'a rejected justification is no justification');
+  assert.equal(state.rejected[id].note, 'sub(0, 1) gives -1 in the original and 1 in the mutant');
+  blocked(() => pipeline.advance(dir), /1 surviving mutant\(s\) without a killing test or a justification/);
+  assert.match(gp(dir, 'status').out, /Justification rejected by the reviewer: src\/math\.mjs:2[^\n]*sub\(0, 1\) gives -1[^\n]*Write the test that kills it/);
+
+  // a new reason needs a new ruling
+  pipeline.justify(dir, id, 'the difference shows only in a debug log line');
+  state = loadState(dir);
+  assert.deepEqual([state.rejected, state.judged], [{}, {}]);
+  handback(`GATED-REVIEW\nEQUIVALENT: ${id}`);
+  assert.equal(pipeline.advance(dir).stage, 'docs');
 });
 
 test('validation gate: an unfinished mutation run proves nothing', async () => {

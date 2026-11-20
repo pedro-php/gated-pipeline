@@ -3,7 +3,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { classify, loadConfig, packageOf } from '../scripts/lib/config.mjs';
 import { bashWriteTargets, decideAgent, decideBash, decidePath, decideRecords, decideRecordsPath } from '../scripts/lib/guard.mjs';
-import { parseReview } from '../scripts/lib/review.mjs';
+import { parseReview, parseRulings, parseSpecCheck } from '../scripts/lib/review.mjs';
 import { parseSpec, specProblems } from '../scripts/lib/spec.mjs';
 import { parseJestJson, parseJunit } from '../scripts/lib/test-report.mjs';
 import { globToRegExp } from '../scripts/lib/util.mjs';
@@ -185,6 +185,13 @@ test('agents: the reviewer writes nothing, the test-writer only tests, the imple
 test('review block: findings are read by kind; no block means no review', () => {
   assert.equal(parseReview('looks fine to me'), null);
   assert.deepEqual(parseReview('all good\nGATED-REVIEW'), []);
+  assert.deepEqual(parseRulings('GATED-REVIEW\nEQUIVALENT: a.ts:3:1:X:ab12cd34\n* KILLABLE: a.ts:9:2:Y:ffff0000 an empty list'), [
+    { verdict: 'equivalent', text: 'a.ts:3:1:X:ab12cd34' },
+    { verdict: 'killable', text: 'a.ts:9:2:Y:ffff0000 an empty list' },
+  ]);
+  assert.equal(parseSpecCheck('all clear'), null);
+  assert.deepEqual(parseSpecCheck('GATED-SPEC-CHECK'), []);
+  assert.deepEqual(parseSpecCheck('GATED-SPEC-CHECK\nUNCLEAR: AC-2 inclusive or exclusive bound?\n- UNCLEAR: AC-3 which timezone'), ['AC-2 inclusive or exclusive bound?', 'AC-3 which timezone']);
   assert.deepEqual(parseReview('I will end with GATED-REVIEW.\nBLOCKING: a draft, dropped\n\nGATED-REVIEW\nADVISORY: kept'), [{ kind: 'advisory', text: 'kept' }], 'the closing block counts');
   assert.deepEqual(parseReview('GATED-REVIEW\nBLOCKING: a.ts:3 empty input -> crash, but AC-2\n- **ADVISORY**: b.ts:9 slow on big lists\n'), [
     { kind: 'blocking', text: 'a.ts:3 empty input -> crash, but AC-2' },

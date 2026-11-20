@@ -38,6 +38,8 @@ const DEFAULTS = {
   interview: 'always',
   // Optional cap on interview rounds (one round = one batch of questions). null = no cap.
   interviewMaxRounds: null,
+  // true = before the user is asked to approve a spec, an agent that has seen nothing else reads it.
+  specCheck: true,
   // true = every item needs held-out tests for each criterion (see lib/holdout.mjs).
   holdout: true,
   // Mutation runs allowed at the same time across the repository's worktrees. 0 = no limit.

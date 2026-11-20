@@ -6,7 +6,7 @@ import os from 'node:os';
 import path from 'node:path';
 import * as pipeline from '../scripts/lib/pipeline.mjs';
 import { loadState, saveState } from '../scripts/lib/state.mjs';
-import { approvals, gp, hook, IMPL, makeRepo, RED_TEST, SPEC, write } from './helpers.mjs';
+import { approvals, DEFAULT_CONFIG, gp, hook, IMPL, makeRepo, RED_TEST, SPEC, write } from './helpers.mjs';
 
 function item(type = 'feature') {
   const repo = makeRepo();
@@ -157,6 +157,33 @@ test('approval dialog: the pipeline puts the text being approved into it, tagged
   show('toolu_b');
   assert.match(answer('toolu_b'), /spec approval recorded$/);
   assert.match(pipeline.summary(dir, pipeline.configFor(dir), loadState(dir)), /Spec approved by the user: \d{4}-\d\d-\d\d, answered in the approval dialog; the text was shown as the pipeline read it from disk \(sha256 [0-9a-f]{12}\)/);
+});
+
+test('spec check: the user is asked only about a spec that someone read cold, and sees what that reader found unclear', () => {
+  const repo = makeRepo({ ...structuredClone(DEFAULT_CONFIG), specCheck: true });
+  const dir = pipeline.start(repo, { type: 'feature', item: 'sub' });
+  write(dir, '.gated/spec.md', SPEC);
+  assert.match(dialog(dir, 'Approve spec for sub?').pre.permissionDecisionReason, /nobody has read this version of the spec cold yet/);
+  assert.throws(() => pipeline.approve(dir, 'spec'), /nobody has read this version/, 'the terminal path asks for the same');
+
+  const handback = (message, agent_type = 'gated-pipeline:test-writer') => hook('handback', { hook_event_name: 'PreToolUse', tool_name: 'SubagentHandback', cwd: dir, agent_type, agent_id: 't1', tool_input: { message } });
+  assert.match(handback('The spec reads fine.').json.hookSpecificOutput.permissionDecisionReason, /end your report with the GATED-SPEC-CHECK block/);
+  assert.equal(handback('GATED-SPEC-CHECK', 'gated-pipeline:implementer').json, null);
+  assert.equal(loadState(dir).evidence.specCheck, undefined, 'only the test-writer reads the spec cold');
+  assert.equal(handback('Read it.\n\nGATED-SPEC-CHECK\nUNCLEAR: AC-1 does sub(3, 5) return -2 or is a negative result an error?').json, null);
+  assert.match(gp(dir, 'status').out, /Unclear in the spec as last read: AC-1 does sub\(3, 5\)/);
+
+  const asked = dialog(dir, 'Approve spec for sub?');
+  assert.match(asked.shown.options[0].preview, /Example: sub\(5, 3\) -> 2\n\n\n---\nStill unclear to a reader who saw only this spec[\s\S]*- AC-1 does sub\(3, 5\) return -2/);
+  assert.match(asked.note, /spec approval recorded$/);
+
+  // the answer to the open point goes into the spec, which is then a new text nobody has read yet
+  write(dir, '.gated/spec.md', `${SPEC}A negative result is returned as it is: sub(3, 5) -> -2\n`);
+  assert.match(dialog(dir, 'Approve spec for sub?').pre.permissionDecisionReason, /nobody has read this version/);
+  hook('stop', { hook_event_name: 'SubagentStop', cwd: dir, agent_type: 'gated-pipeline:test-writer', agent_id: 't2', last_assistant_message: 'GATED-SPEC-CHECK' });
+  const clean = dialog(dir, 'Approve spec for sub?');
+  assert.doesNotMatch(clean.shown.options[0].preview, /Still unclear/);
+  assert.match(clean.note, /spec approval recorded$/);
 });
 
 test('approval dialog: the merge dialog shows the evidence and every file the item changes', () => {

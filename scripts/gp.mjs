@@ -9,6 +9,7 @@ import readline from 'node:readline/promises';
 import { git } from './lib/git.mjs';
 import { openSurvivors } from './lib/mutation.mjs';
 import * as pipeline from './lib/pipeline.mjs';
+import { awaitingRuling } from './lib/review.mjs';
 import { readSpec } from './lib/spec.mjs';
 import { findRoot, loadState } from './lib/state.mjs';
 import { fail, GateError } from './lib/util.mjs';
@@ -50,6 +51,10 @@ async function main() {
       if (state.sealed) say(`Held-out tests: ${Object.keys(state.sealed).length} file(s), hidden until the implementation gate has run them`);
       const open = openSurvivors(state);
       if (open.length) say(`Open survivors: ${open.length}`);
+      for (const s of awaitingRuling(state)) say(`Justification awaiting the reviewer's ruling: ${s.id}  ${s.mutator} -> ${JSON.stringify(s.replacement)}: ${state.justified[s.id]}`);
+      for (const [id, r] of Object.entries(state.rejected ?? {})) say(`Justification rejected by the reviewer: ${id} (${r.note || 'killable'}). Write the test that kills it.`);
+      const check = state.evidence.specCheck;
+      if (state.stage === 'spec' && check) for (const u of check.unclear) say(`Unclear in the spec as last read: ${u}`);
       const findings = state.findings.filter((f) => f.status === 'open');
       for (const f of findings) say(`Blocking finding #${f.id}: ${f.text}`);
       for (const f of state.findings.filter((x) => x.status === 'refuted')) say(`Refuted finding #${f.id}: ${f.text} (test: ${f.test})`);
