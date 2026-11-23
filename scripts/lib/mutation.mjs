@@ -31,6 +31,8 @@ export function parseReport(report, pkgRoot, prefix) {
         mutator: m.mutatorName ?? 'unknown',
         replacement: m.replacement ?? '',
         status: m.status,
+        // How many tests ran the mutated code, when the tool says (null when it does not).
+        coveredBy: Array.isArray(m.coveredBy) ? m.coveredBy.length : null,
       });
     }
   }

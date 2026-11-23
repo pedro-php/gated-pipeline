@@ -2,6 +2,7 @@
 // each `file:start-end` argument. A mutant is killed when some file under
 // test/ contains the marker `kills:<file>:<line>`; otherwise it survives.
 // FAKE_MUTATOR_PENDING=1 leaves every mutant unrun.
+// FAKE_MUTATOR_COVERAGE=1 adds `coveredBy`: one entry per `covers:<file>:<line>` or `kills:…` marker.
 import fs from 'node:fs';
 import path from 'node:path';
 
@@ -14,12 +15,14 @@ for (const arg of process.argv.slice(2)) {
   files[file] ??= { mutants: [] };
   for (let line = Number(start); line <= Number(end); line++) {
     const killed = tests.includes(`kills:${file}:${line}`);
+    const covering = tests.split(`covers:${file}:${line}`).length - 1 + (tests.split(`kills:${file}:${line}`).length - 1);
     files[file].mutants.push({
       id: `${file}:${line}`,
       mutatorName: 'Fake',
       replacement: `mutated line ${line}`,
       location: { start: { line, column: 0 }, end: { line, column: 1 } },
       status: process.env.FAKE_MUTATOR_PENDING ? 'Pending' : killed ? 'Killed' : 'Survived',
+      ...(process.env.FAKE_MUTATOR_COVERAGE ? { coveredBy: Array.from({ length: covering }, (_, i) => String(i)) } : {}),
     });
   }
 }
